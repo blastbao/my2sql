@@ -9,11 +9,11 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/go-mysql-org/go-mysql/mysql"
+	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/siddontang/go-log/log"
 	constvar "my2sql/constvar"
 	toolkits "my2sql/toolkits"
-	"github.com/siddontang/go-log/log"
-	"github.com/go-mysql-org/go-mysql/mysql"
-        "github.com/go-mysql-org/go-mysql/replication"
 )
 
 const (
@@ -32,10 +32,10 @@ const (
 	C_trxRollback = 2
 	C_trxProcess  = -1
 
-	C_reProcess  = 0
-	C_reContinue = 1
-	C_reBreak    = 2
-	C_reFileEnd  = 3
+	C_reProcess  = 0	// 需要处理
+	C_reContinue = 1	// 继续解析
+	C_reBreak    = 2	// 结束解析
+	C_reFileEnd  = 3	// 文件尾
 )
 
 var (
@@ -69,6 +69,48 @@ var (
 	GDdlPrintHeader []string = []string{"datetime", "binlog", "startposition", "stopposition", "sql"}
 	//GThreadsFinished          = &Threads_Finish_Status{finishedThreadsCnt: 0, threadsCnt: 0}
 )
+
+
+// 限制
+//	my2sql 是模拟一个从库去在线获取主库 binlog，然后进行解析，因此执行操作的数据库用户需要具有 SELECT，REPLICATION SALVE，REPLICATION CLIENT 的权限。
+//	与 binlog2sql、MyFlash 差不多，my2sql 目前也不支持 8.0；闪回功能需要开启 binlog_format=row，binlog_row_image=full；只能闪回 DML 操作，不支持 DDL 的闪回。
+//	无法离线解析 binlog（MyFlash 支持）。
+//	不能以 GTID 事务为单位进行解析（MyFlash 支持），具体 file+pos 点位需要先通过手工解析 binlog 后确认。
+//	闪回/前滚 SQL 中，没有提供具体的 begin/commit 的位置，使用时无法分隔事务，需要人工判断。
+//	使用事务分析功能时，只能给出具体的大/长事务发生时间、点位、涉及的对象和操作类型，不能给出具体的 SQL 语句，完整的语句仍然需要去 binlog 中进行查看（需设置 binlog_rows_query_log_events=on）
+//
+// 总结
+//	my2sql 是一款比较实用的 binlog 解析工具，除了能闪回 DML 的误操作外，还能通过生成前滚 SQL 进行数据补偿、利用事务分析功能来排查主从延迟问题、捕捉长时间不提交的事务等
+//	my2sql 基于 Go 语言编写，直接提供了 Linux 二进制版本，对环境无依赖，使用便捷
+//	my2sql 性能较好，解析 binlog 时生成闪回/前滚 SQL 的效率较高（对比 binlog2sql），作者号称能达到 50-60 倍左右，有兴趣的朋友可进行一轮性能对比测试
+//	MyFlash 解析 binlog 的效率也比 binlog2sql 高，但生成的回滚文件仍然是二进制格式的，需要依赖 mysqlbinlog 来进行处理，同时，也无法直观地对反解析后的回滚内容进行业务验证，my2sql 的出现正好弥补了这两者的不足
+//
+// 主要参数
+//
+// -work-type：指定工作类型（前滚、闪回、事务分析），合法值分别为：2sql（默认）、rollback、stats
+// -sql：过滤 DML 语句的类型，合法值为：insert、update、delete
+// -ignorePrimaryKeyForInsert：对于 work-type 为 2sql 的 insert 操作，忽略主键（适合大量数据导入的场景）
+// -big-trx-row-limit int：判定为大事务的阈值（默认 500 行），合法值区间：10-30000 行
+// -long-trx-seconds int：判定为长事务的阈值（默认 300 秒），合法值区间：1-3600 秒
+// -databases：过滤库，默认为全部库
+// -tables：过滤表，默认为全部表
+// -start-file：指定开始的 binlog 文件
+// -start-pos：指定 binlog 文件中开始的点位
+// -start-datetime：指定开始的时间
+// -stop-datetime：指定结束的时间
+// -output-dir：指定文件生成目录
+// -output-toScreen：指定输出到屏幕
+// -tl：指定时区（time location），默认为 local（Asia/Shanghai）
+//
+//
+//	-mode				repl：伪装成从库从主库获取 binlog 文件；file：从本地文件系统获取 binlog 文件，默认repl
+//	-local-binlog-file 	当指定	当指定-mode=file参数时，需要指定 -local-binlog-file binlog 文件相对路径或绝对路径
+//	-sql				要解析的 sql 类型，可选参数 insert ，update ，delete ，默认全部解析
+//	-file-per-table		为每个表生成一个 sql 文件
+//	-output-dir			将生成的结果存放到指定目录
+//	-threads			线程数，默认2个，支持并发
+//	-work-type			2sql：生成原始 sql ，rollback ：生成回滚 sql ，stats：只统计 DML 、事务信息
+
 
 type ConfCmd struct {
 	Mode      string

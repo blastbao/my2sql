@@ -3,8 +3,8 @@ package main
 import (
 	"sync"
 
+	"github.com/go-mysql-org/go-mysql/replication"
 	my "my2sql/base"
-        "github.com/go-mysql-org/go-mysql/replication"
 )
 
 func main() {
@@ -26,16 +26,20 @@ func main() {
 			go my.GenForwardRollbackSqlFromBinEvent(i, my.GConfCmd, &wgGenSql)
 		}
 	}
+
+
+
+	// repl：伪装成从库从主库获取 binlog 文件
 	if my.GConfCmd.Mode == "repl" {
 		my.ParserAllBinEventsFromRepl(my.GConfCmd)
+	// file：从本地文件系统获取 binlog 文件
 	} else if my.GConfCmd.Mode == "file" {
-		myParser := my.BinFileParser{}
-		myParser.Parser = replication.NewBinlogParser()
-		// donot parse mysql datetime/time column into go time structure, take it as string
-		myParser.Parser.SetParseTime(false) 
-		// sqlbuilder not support decimal type 
-		myParser.Parser.SetUseDecimal(false) 
-		myParser.MyParseAllBinlogFiles(my.GConfCmd)
+		psr := replication.NewBinlogParser()
+		psr.SetParseTime(false)	// do not parse mysql datetime/time column into go time structure, take it as string
+		psr.SetUseDecimal(false)	// sqlbuilder not support decimal type
+		my.BinFileParser{
+			Parser: psr,
+		}.MyParseAllBinlogFiles(my.GConfCmd)
 	}
 	wgGenSql.Wait()
 	close(my.GConfCmd.SqlChan)

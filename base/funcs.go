@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/siddontang/go-log/log"
 	MyPos "github.com/go-mysql-org/go-mysql/mysql"
+	"github.com/siddontang/go-log/log"
 	toolkits "my2sql/toolkits"
 )
 
@@ -70,16 +70,26 @@ func CheckIsDir(fd string) (bool, string) {
 	}
 }
 
+// my2sql  -user root -password lhr  -port 3306 \
+// > -host 192.168.66.35 -databases lhrdb  -tables student \
+// > -work-type 2sql   -start-file mysql3306-bin.000004 \
+// > -start-pos 154 -stop-file  mysql3306-bin.000004 -stop-pos  2131 \
+// > -output-dir /my2sql/
+
 func GetBinlogBasenameAndIndex(binlog string) (string, int) {
+	// 文件名 mysql3306-bin.000004
 	binlogFile := filepath.Base(binlog)
+	// 扩展名 000004
 	arr := strings.Split(binlogFile, ".")
 	cnt := len(arr)
+	// 下标 4
 	n, err := strconv.ParseUint(arr[cnt-1], 10, 32)
 	if err != nil {
 		log.Fatalf("parse binlog file index number error %v", err)
 	}
 	indx := int(n)
 	baseName := strings.Join(arr[0:cnt-1], "")
+	// 返回值 mysql3306-bin, 4
 	return baseName, indx
 }
 

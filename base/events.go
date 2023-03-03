@@ -10,10 +10,9 @@ import (
 	"sync"
 	"time"
 
-	SQL "my2sql/sqlbuilder"
-	constvar "my2sql/constvar"
 	"github.com/siddontang/go-log/log"
-
+	constvar "my2sql/constvar"
+	SQL "my2sql/sqlbuilder"
 )
 
 type ExtraSqlInfoOfPrint struct {
@@ -290,6 +289,7 @@ func PrintExtraInfoForForwardRollbackupSql(cfg *ConfCmd, wg *sync.WaitGroup) {
 
 func GetForwardRollbackSqlFileName(schema string, table string, filePerTable bool, outDir string, ifRollback bool, binlog string, ifTmp bool) string {
 
+	//
 	_, idx := GetBinlogBasenameAndIndex(binlog)
 
 	if ifRollback {

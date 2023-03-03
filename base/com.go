@@ -1,14 +1,14 @@
 package base
 
 import (
-	"sync"
 	"path/filepath"
+	"sync"
 
-	"my2sql/dsql"
-	toolkits "my2sql/toolkits"
-	"github.com/siddontang/go-log/log"
 	"github.com/go-mysql-org/go-mysql/mysql"
 	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/siddontang/go-log/log"
+	"my2sql/dsql"
+	toolkits "my2sql/toolkits"
 )
 
 type BinEventHandlingIndx struct {
@@ -35,16 +35,38 @@ type MyBinEvent struct {
 	OrgSql      string        // for ddl and binlog which is not row format
 }
 
-func (this *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent, currentBinlog *string) int {
-	myPos := mysql.Position{Name: *currentBinlog, Pos: ev.Header.LogPos}
+func (e *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent, currentBinlog *string) int {
+	// 当前 pos
+	myPos := mysql.Position{
+		Name: *currentBinlog,
+		Pos: ev.Header.LogPos,
+	}
 
+	// Rotate_event
+	//
+	// 当 MySQL 切换至新的 binlog 文件的时候，MySQL 会在旧的 binlog 文件中写入一个 ROTATE_EVENT ，
+	// 其内容包含新的 binlog 文件的文件名以及第一个偏移地址。
+	//
+	// 当在数据库中执行 FLUSH LOGS 语句或者 binlog 文件的大小超过 max_binlog_size 参数设定的值就会切换新的 binlog 文件。
+	//
+	//
+	// 当 binlog 文件超过指定大小（在哪指定？），ROTATE EVENT 会写在文件最后，指向下一个 binlog 文件。
+	// 这个事件通知 slave ，应该去读取下一个 binlog 文件了。
+	//
+	// master 会写 ROTATE EVENT 到本地文件；在 slave 上运行 FLUSH LOGS 指令，或者收到 master 的 ROTATE EVENT 事件，
+	// slave 会将 ROTATE EVENT 写到 relay log 里。
+	//
+	// 也存在 binlog 文件没有 ROTATE EVENT 的情况，比如 server crash 的时候。
+
+	// 如果当前为 rotate 事件，则解析得到下一个 binlog 文件名
 	if ev.Header.EventType == replication.ROTATE_EVENT {
-		rotatEvent := ev.Event.(*replication.RotateEvent)
-		*currentBinlog = string(rotatEvent.NextLogName)
-		this.IfRowsEvent = false
+		rotateEvent := ev.Event.(*replication.RotateEvent)
+		*currentBinlog = string(rotateEvent.NextLogName)	// 下个文件
+		e.IfRowsEvent = false
 		return C_reContinue
 	}
 
+	//
 	if cfg.IfSetStartFilePos {
 		cmpRe := myPos.Compare(cfg.StartFilePos)
 		if cmpRe == -1 {
@@ -72,6 +94,7 @@ func (this *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent,
 			return C_reBreak
 		}
 	}
+
 	if cfg.FilterSqlLen == 0 {
 		goto BinEventCheck
 	}
@@ -101,6 +124,8 @@ func (this *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent,
 	}
 
 BinEventCheck:
+
+
 	switch ev.Header.EventType {
 	case replication.WRITE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv1,
@@ -110,8 +135,8 @@ BinEventCheck:
 		replication.DELETE_ROWS_EVENTv2:
 
 		wrEvent := ev.Event.(*replication.RowsEvent)
-		db := string(wrEvent.Table.Schema)
-		tb := string(wrEvent.Table.Table)
+		db := string(wrEvent.Table.Schema)	// 数据库
+		tb := string(wrEvent.Table.Table)	// 表
 		/*if !cfg.IsTargetTable(db, tb) {
 			return C_reContinue
 		}*/
@@ -139,19 +164,19 @@ BinEventCheck:
 			}
 		}
 
-		this.BinEvent = wrEvent
-		this.IfRowsEvent = true
+		e.BinEvent = wrEvent
+		e.IfRowsEvent = true
 	case replication.QUERY_EVENT:
-		this.IfRowsEvent = false
+		e.IfRowsEvent = false
 
 	case replication.XID_EVENT:
-		this.IfRowsEvent = false
+		e.IfRowsEvent = false
 
 	case replication.MARIADB_GTID_EVENT:
-		this.IfRowsEvent = false
+		e.IfRowsEvent = false
 
 	default:
-		this.IfRowsEvent = false
+		e.IfRowsEvent = false
 		return C_reContinue
 	}
 
@@ -163,8 +188,11 @@ BinEventCheck:
 func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, currentBinlog string) (int) {
 	// process: 0, continue: 1, break: 2
 
+	// 构造当前 pos ，由文件名、偏移地址构成
 	myPos := mysql.Position{Name: currentBinlog, Pos: header.LogPos}
 	//fmt.Println(cfg.StartFilePos, cfg.IfSetStopFilePos, myPos)
+
+	// 如果设置了解析的起始地址，且当前 pos 小于 start ，直接返回
 	if cfg.IfSetStartFilePos {
 		cmpRe := myPos.Compare(cfg.StartFilePos)
 		if cmpRe == -1 {
@@ -172,6 +200,8 @@ func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, curr
 		}
 	}
 
+
+	// 如果设置了解析的结束地址，且当前 pos 大于 end ，直接返回
 	if cfg.IfSetStopFilePos {
 		cmpRe := myPos.Compare(cfg.StopFilePos)
 		if cmpRe >= 0 {
@@ -180,22 +210,27 @@ func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, curr
 	}
 	
 	//fmt.Println(cfg.StartDatetime, cfg.StopDatetime, header.Timestamp)
+	//
+	// 如果设置了解析的起始时间，且当前 timestamp 小于 start ，直接返回
 	if cfg.IfSetStartDateTime {
-
 		if header.Timestamp < cfg.StartDatetime {
 			return C_reContinue
 		}
 	}
 
+	// 如果设置了解析的结束时间，且当前 timestamp 大于 end ，直接返回
 	if cfg.IfSetStopDateTime {
 		if header.Timestamp >= cfg.StopDatetime {
 			return C_reBreak
 		}
 	}
+
+	// 过滤 sql 长度？
 	if cfg.FilterSqlLen == 0 {
 		return C_reProcess
 	}
 
+	// 'INSERT'
 	if header.EventType == replication.WRITE_ROWS_EVENTv1 || header.EventType == replication.WRITE_ROWS_EVENTv2 {
 		if cfg.IsTargetDml("insert") {
 			return C_reProcess
@@ -204,6 +239,7 @@ func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, curr
 		}
 	}
 
+	// 'UPDATE'
 	if header.EventType == replication.UPDATE_ROWS_EVENTv1 || header.EventType == replication.UPDATE_ROWS_EVENTv2 {
 		if cfg.IsTargetDml("update") {
 			return C_reProcess
@@ -212,6 +248,7 @@ func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, curr
 		}
 	}
 
+	// 'DELETE'
 	if header.EventType == replication.DELETE_ROWS_EVENTv1 || header.EventType == replication.DELETE_ROWS_EVENTv2 {
 		if cfg.IsTargetDml("delete") {
 			return C_reProcess
@@ -226,15 +263,19 @@ func CheckBinHeaderCondition(cfg *ConfCmd, header *replication.EventHeader, curr
 func GetFirstBinlogPosToParse(cfg *ConfCmd) (string, int64) {
 	var binlog string
 	var pos int64
+
+	// 如果指定了起始文件
 	if cfg.StartFile != "" {
 		binlog = filepath.Join(cfg.BinlogDir, cfg.StartFile)
 	} else {
-		binlog = cfg.GivenBinlogFile
+		binlog = cfg.GivenBinlogFile // 未指定，则读取指定 binlog 文件
 	}
+
+	// 如果制定了起始偏移
 	if cfg.StartPos != 0 {
 		pos = int64(cfg.StartPos)
 	} else {
-		pos = 4
+		pos = 4 // 未指定，默认 4
 	}
 
 	return binlog, pos
