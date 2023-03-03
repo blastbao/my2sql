@@ -37,7 +37,9 @@ var (
 )
 
 func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup) {
+
 	defer wg.Done()
+
 	var (
 		err error
 		//var currentIdx uint64
@@ -63,13 +65,17 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 	}
 
 	for ev := range cfg.EventChan {
+		// 只处理 rows 类型事件
 		if !ev.IfRowsEvent {
 			continue
 		}
-		posStr = GetPosStr(ev.MyPos.Name, ev.StartPos, ev.MyPos.Pos)
+
+		posStr = GetPosStr(ev.MyPos.Name, ev.StartPos, ev.MyPos.Pos) // 事件的 Pos
 		db = string(ev.BinEvent.Table.Schema)
 		tb = string(ev.BinEvent.Table.Table)
 		fulltb = GetAbsTableName(db, tb)
+
+		// 获取库表信息
 		tbInfo, err = G_TablesColumnsInfo.GetTableInfoJson(db, tb)
 		if err != nil {
 			log.Errorf(fmt.Sprintf("error to found %s table structure for event", fulltb))
@@ -78,25 +84,36 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 		if tbInfo == nil {
 			log.Errorf("no suitable table struct found for %s for event %s", fulltb, posStr)
 		}
+
+		// 列数目
 		colCnt = len(ev.BinEvent.Rows[0])
+		//
 		allColNames = GetAllFieldNamesWithDroppedFields(colCnt, tbInfo.Columns)
+		// 列定义s，列类型s
 		colsDef, colsTypeName = GetSqlFieldsEXpressions(colCnt, allColNames, ev.BinEvent.Table)
+
 		colsTypeNameFromMysql := make([]string, len(colsTypeName))
 		if len(colsTypeName) > len(tbInfo.Columns) {
 			log.Fatalf("%s column count %d in binlog > in table structure %d, usually means DDL in the middle", fulltb, len(colsTypeName), len(tbInfo.Columns))
 		}
+
+
+		//
 		for ci, colType := range colsTypeName {
+
+			// 字段类型
 			colsTypeNameFromMysql[ci] = tbInfo.Columns[ci].FieldType
 
+			// 整型
 			if strings.Contains(strings.ToLower(colType), "int") {
 				if tbInfo.Columns[ci].IsUnsigned {
 					for ri, _ := range ev.BinEvent.Rows {
 						ev.BinEvent.Rows[ri][ci] = sqltypes.ConvertIntUnsigned(ev.BinEvent.Rows[ri][ci], colType)
 					}
-
 				}
 			}
-			
+
+			// 块型
 			if colType == "blob" {
 				// text is stored as blob
 				if strings.Contains(strings.ToLower(tbInfo.Columns[ci].FieldType), "text") {
@@ -113,6 +130,7 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 					}
 				}
 			}
+
 			/*if colType == "json" {
 				for ri, _ := range ev.BinEvent.Rows {
 					if ev.BinEvent.Rows[ri][ci] == nil {
@@ -127,21 +145,28 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 				}
 
 			}*/
+
 		}
+
+		// 获取唯一键
 		uniqueKey = tbInfo.GetOneUniqueKey(cfg.UseUniqueKeyFirst)
 		if len(uniqueKey) > 0 {
+			// uniqueKeyIdx[i]=>j 表示第 i 个唯一键列对应库表结构的第 j 个列。
 			uniqueKeyIdx = GetColIndexFromKey(uniqueKey, allColNames)
 		} else {
 			uniqueKeyIdx = []int{}
 		}
 
+		// 获取主键
 		if len(tbInfo.PrimaryKey) > 0 {
+			// uniqueKeyIdx[i]=>j 表示第 i 个主键列对应库表结构的第 j 个列。
 			primaryKeyIdx = GetColIndexFromKey(tbInfo.PrimaryKey, allColNames)
 		} else {
 			primaryKeyIdx = []int{}
 			ifIgnorePrimary = false
 		}
 
+		// 生成 sql 语句
 		if ev.SqlType == "insert" {
 			if ifRollback {
 				sqlArr = GenDeleteSqlsForOneRowsEventRollbackInsert(posStr, ev.BinEvent, colsDef, uniqueKeyIdx, cfg.FullColumns, cfg.SqlTblPrefixDb)
@@ -164,20 +189,34 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 			fmt.Println("unsupported query type %s to generate 2sql|rollback sql, it should one of insert|update|delete. %s", ev.SqlType, ev.MyPos.String())
 			continue
 		}
-		currentSqlForPrint = ForwardRollbackSqlOfPrint{sqls: sqlArr,
-			sqlInfo: ExtraSqlInfoOfPrint{schema: db, table: tb, binlog: ev.MyPos.Name, startpos: ev.StartPos, endpos: ev.MyPos.Pos,
+
+		// 构造解析结果，用于输出
+		currentSqlForPrint = ForwardRollbackSqlOfPrint{
+			sqls: sqlArr,
+			sqlInfo: ExtraSqlInfoOfPrint{
+				schema: db,
+				table: tb,
+				binlog: ev.MyPos.Name,
+				startpos: ev.StartPos,
+				endpos: ev.MyPos.Pos,
 				datetime: GetDatetimeStr(int64(ev.Timestamp), int64(0), constvar.DATETIME_FORMAT_NOSPACE),
-				trxIndex: ev.TrxIndex, trxStatus: ev.TrxStatus}}
+				trxIndex: ev.TrxIndex,
+				trxStatus: ev.TrxStatus,
+			},
+		}
 
 		for {
 			//fmt.Println("in thread", i)
+			// 锁，多个 goroutine 串行输出，避免错乱
 			G_HandlingBinEventIndex.lock.Lock()
 			//fmt.Println("handing index:", G_HandlingBinEventIndex.EventIdx, "binevent index:", ev.EventIdx)
 			if G_HandlingBinEventIndex.EventIdx == ev.EventIdx {
+				// 输出到屏幕
 				if cfg.OutputToScreen {
 					for _, sql := range currentSqlForPrint.sqls {
 						fmt.Println(sql)
 					}
+				// 输出到管道
 				} else {
 					cfg.SqlChan <- currentSqlForPrint
 				}
@@ -186,10 +225,8 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 				//fmt.Println("handing index == binevent index, break")
 				break
 			}
-
 			G_HandlingBinEventIndex.lock.Unlock()
 			time.Sleep(1 * time.Microsecond)
-
 		}
 	}
 	log.Infof(fmt.Sprintf("exit thread %d to generate redo/rollback sql", i))

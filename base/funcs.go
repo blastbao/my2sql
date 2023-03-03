@@ -130,6 +130,7 @@ func CommaSeparatedListToArray(str string) []string {
 	return arr
 }
 
+// GetAbsTableName 构造库表名 db.tb
 func GetAbsTableName(schema, table string) string {
 	return fmt.Sprintf("%s%s%s", schema, KEY_DB_TABLE_SEP, table)
 }

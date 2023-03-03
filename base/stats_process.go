@@ -3,21 +3,26 @@ package base
 import (
 	//"os"
 	"fmt"
-	"sync"
+	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/siddontang/go-log/log"
+	constvar "my2sql/constvar"
 	"strings"
+	"sync"
 	//"path/filepath"
 	"my2sql/dsql"
-	constvar "my2sql/constvar"
-	"github.com/siddontang/go-log/log"
-        "github.com/go-mysql-org/go-mysql/replication"
 )
 
 var (
 	//gDdlRegexp *regexp.Regexp = regexp.MustCompile(C_ddlRegexp)
-	Stats_Result_Header_Column_names []string = []string{"binlog", "starttime", "stoptime",
-		"startpos", "stoppos", "inserts", "updates", "deletes", "database", "table"}
-	Stats_DDL_Header_Column_names        []string = []string{"datetime", "binlog", "startpos", "stoppos", "sql"}
-	Stats_BigLongTrx_Header_Column_names []string = []string{"binlog", "starttime", "stoptime", "startpos", "stoppos", "rows", "duration", "tables"}
+	Stats_Result_Header_Column_names []string = []string{
+		"binlog", "starttime", "stoptime", "startpos", "stoppos", "inserts", "updates", "deletes", "database", "table",
+	}
+	Stats_DDL_Header_Column_names []string = []string{
+		"datetime", "binlog", "startpos", "stoppos", "sql",
+	}
+	Stats_BigLongTrx_Header_Column_names []string = []string{
+		"binlog", "starttime", "stoptime", "startpos", "stoppos", "rows", "duration", "tables",
+	}
 )
 
 type BinEventStats struct {
@@ -68,51 +73,46 @@ type BigLongTrxInfo struct {
 
 }
 
-
 func GetBigLongTrxPrintHeaderLine(headers []string) string {
 	//{"binlog", "starttime", "stoptime", "startpos", "stoppos", "rows","duration", "tables"}
 	return fmt.Sprintf("%-17s %-19s %-19s %-10s %-10s %-8s %-10s %s\n", ConvertStrArrToIntferfaceArrForPrint(headers)...)
 }
-
 
 func GetStatsPrintHeaderLine(headers []string) string {
 	//[binlog, starttime, stoptime, startpos, stoppos, inserts, updates, deletes, database, table,]
 	return fmt.Sprintf("%-17s %-19s %-19s %-10s %-10s %-8s %-8s %-8s %-15s %-20s\n", ConvertStrArrToIntferfaceArrForPrint(headers)...)
 }
 
-
 func GetDbTbAndQueryAndRowCntFromBinevent(ev *replication.BinlogEvent) (string, string, string, string, uint32) {
+
 	var (
-		db      string = ""
-		tb      string = ""
-		sql     string = ""
-		sqlType string = ""
-		rowCnt  uint32 = 0
+		db      string = "" // 库
+		tb      string = "" // 表
+		sql     string = "" // 语句
+		sqlType string = "" // 类型
+		rowCnt  uint32 = 0  // 行数目
 	)
 
 	switch ev.Header.EventType {
-
+	// INSERT
 	case replication.WRITE_ROWS_EVENTv1,
 		replication.WRITE_ROWS_EVENTv2:
-
 		wrEvent := ev.Event.(*replication.RowsEvent)
 		db = string(wrEvent.Table.Schema)
 		tb = string(wrEvent.Table.Table)
 		sqlType = "insert"
 		rowCnt = uint32(len(wrEvent.Rows))
-
+	// UPDATE
 	case replication.UPDATE_ROWS_EVENTv1,
 		replication.UPDATE_ROWS_EVENTv2:
-
 		wrEvent := ev.Event.(*replication.RowsEvent)
 		db = string(wrEvent.Table.Schema)
 		tb = string(wrEvent.Table.Table)
 		sqlType = "update"
-		rowCnt = uint32(len(wrEvent.Rows)) / 2
-
+		rowCnt = uint32(len(wrEvent.Rows)) / 2 // ???
+	// DELETE
 	case replication.DELETE_ROWS_EVENTv1,
 		replication.DELETE_ROWS_EVENTv2:
-
 		//replication.XID_EVENT,
 		//replication.TABLE_MAP_EVENT:
 
@@ -127,34 +127,27 @@ func GetDbTbAndQueryAndRowCntFromBinevent(ev *replication.BinlogEvent) (string, 
 		db = string(queryEvent.Schema)
 		sql = string(queryEvent.Query)
 		sqlType = "query"
-
 	case replication.MARIADB_GTID_EVENT:
 		// For global transaction ID, used to start a new transaction event group, instead of the old BEGIN query event, and also to mark stand-alone (ddl).
 		//https://mariadb.com/kb/en/library/gtid_event/
 		sql = "begin"
 		sqlType = "query"
-
 	case replication.XID_EVENT:
 		// XID_EVENT represents commit。rollback transaction not in binlog
 		sql = "commit"
 		sqlType = "query"
-
 	}
 	return db, tb, sqlType, sql, rowCnt
-
 }
-
-
-
 
 func ProcessBinEventStats(cfg *ConfCmd, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	var (
-		lastPrintTime   uint32                         = 0
-		lastBinlog      string                         = ""
-		statsPrintArr   map[string]*BinEventStatsPrint = map[string]*BinEventStatsPrint{} // key=db.tb
-		oneBigLong      BigLongTrxInfo = BigLongTrxInfo{Statements: map[string]map[string]uint32{}}
+		lastPrintTime uint32                         = 0
+		lastBinlog    string                         = ""
+		statsPrintArr map[string]*BinEventStatsPrint = map[string]*BinEventStatsPrint{} // key=db.tb
+		oneBigLong    BigLongTrxInfo                 = BigLongTrxInfo{Statements: map[string]map[string]uint32{}}
 		//ddlInfoStr      string
 		printInterval   uint32 = uint32(cfg.PrintInterval)
 		bigTrxRowsLimit uint32 = uint32(cfg.BigTrxRowLimit)
@@ -203,13 +196,13 @@ func ProcessBinEventStats(cfg *ConfCmd, wg *sync.WaitGroup) {
 					}
 				}
 
-			} 
+			}
 		} else {
 			//big and long trx
-			if oneBigLong.Binlog == ""{
+			if oneBigLong.Binlog == "" {
 				oneBigLong.Binlog = st.Binlog
 			}
-			if oneBigLong.StartPos == 0{
+			if oneBigLong.StartPos == 0 {
 				oneBigLong.StartPos = st.StartPos
 			}
 
@@ -294,4 +287,3 @@ func GetBigLongTrxStatementsStr(st map[string]map[string]uint32) string {
 	}
 	return fmt.Sprintf("[%s]", strings.Join(strArr, " "))
 }
-

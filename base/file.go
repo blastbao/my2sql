@@ -50,51 +50,46 @@ func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 	log.Info(fmt.Sprintf("start to parse %s %d\n", binlog, binpos))
 
 	for {
-
 		// 如果设置了 stop pos ，会自动停止
 		if cfg.IfSetStopFilePos {
 			if cfg.StopFilePos.Compare(mysql.Position{Name: filepath.Base(binlog), Pos: 4}) < 1 {
 				break
 			}
 		}
-
 		log.Info(fmt.Sprintf("start to parse %s %d\n", binlog, binpos))
-
 		// 解析 binlog 文件
 		result, err := this.MyParseOneBinlogFile(cfg, binlog)
 		if err != nil {
 			log.Error(fmt.Sprintf("error to parse binlog %s %v", binlog, err))
 			break
 		}
-
-		//
+		// 结束
 		if result == C_reBreak {
 			break
+		// 文件尾
 		} else if result == C_reFileEnd {
 			if !cfg.IfSetStopParsPoint && !cfg.IfSetStopDateTime {
 				//just parse one binlog
 				break
 			}
+			// 继续解析下一个 binlog 文件
 			binlog = filepath.Join(cfg.BinlogDir, GetNextBinlog(binBaseName, binBaseIndx))
 			if !toolkits.IsFile(binlog) {
 				log.Info(fmt.Sprintf("%s not exists nor a file\n", binlog))
 				break
 			}
-			binBaseIndx++
-			binpos = 4
+			binBaseIndx++ 	// 索引下标 +1
+			binpos = 4		// 重置 offset
 		} else {
 			log.Info(fmt.Sprintf("this should not happen: return value of MyParseOneBinlog is %d\n", result))
 			break
 		}
-
 	}
 	log.Info("finish parsing binlog from local files")
-
 }
 
 func (this BinFileParser) MyParseOneBinlogFile(cfg *ConfCmd, name string) (int, error) {
 	// process: 0, continue: 1, break: 2
-
 	// 打开文件
 	f, err := os.Open(name)
 	if f != nil {
@@ -104,7 +99,6 @@ func (this BinFileParser) MyParseOneBinlogFile(cfg *ConfCmd, name string) (int, 
 		log.Error(fmt.Sprintf("fail to open %s %v\n", name, err))
 		return C_reBreak, errors.Trace(err)
 	}
-
 	// 读取文件类型
 	fileTypeBytes := int64(4)
 	b := make([]byte, fileTypeBytes)
@@ -116,16 +110,13 @@ func (this BinFileParser) MyParseOneBinlogFile(cfg *ConfCmd, name string) (int, 
 		log.Error(fmt.Sprintf("%s is not a valid binlog file, head 4 bytes must fe'bin' ", name))
 		return C_reBreak, errors.Trace(err)
 	}
-
-
 	// must not seek to other position, otherwise the program may panic because formatevent, table map event is skipped
 	// 跳过 4B
 	if _, err = f.Seek(fileTypeBytes, os.SEEK_SET); err != nil {
 		log.Error(fmt.Sprintf("error seek %s to %d", name, fileTypeBytes))
 		return C_reBreak, errors.Trace(err)
 	}
-
-	//
+	// 执行解析
 	var binlog string = filepath.Base(name)
 	return this.MyParseReader(cfg, f, &binlog)
 }
@@ -133,8 +124,6 @@ func (this BinFileParser) MyParseOneBinlogFile(cfg *ConfCmd, name string) (int, 
 
 func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *string) (int, error) {
 	// process: 0, continue: 1, break: 2, EOF: 3
-
-
 	var (
 		err         error
 		n           int64
@@ -249,7 +238,8 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 		// 创建 event 对象
 		binEvent := &replication.BinlogEvent{
 			Header: h,
-			Event: e, // we donnot need raw data
+			Event: e,
+			// RawData: rawData, // we donnot need raw data
 		}
 
 		oneMyEvent := &MyBinEvent{
@@ -261,25 +251,29 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 		}
 
 		//StartPos: h.LogPos - h.EventSize}
-
-
+		// 解析当前 event ，得到 RowsEvent 后保存到 oneMyEvent.BinEvent 上。
 		chRe = oneMyEvent.CheckBinEvent(cfg, binEvent, binlog)
 		if chRe == C_reBreak {
+			// 停止遍历(时间区间非法)
 			return C_reBreak, nil
 		} else if chRe == C_reContinue {
+			// 继续遍历(过滤)
 			continue
 		} else if chRe == C_reFileEnd {
+			// 停止遍历(文件尾)
 			return C_reFileEnd, nil
-		} 
+		}
 
-
-		//
+		// 库, 表, 类型, 语句, 行数目
 		db, tb, sqlType, sql, rowCnt = GetDbTbAndQueryAndRowCntFromBinevent(binEvent)
+
+		// 查询
 		if sqlType == "query" {
 			sqlLower = strings.ToLower(sql)
+			// 事务
 			if sqlLower == "begin" {
 				trxStatus = C_trxBegin
-				fileTrxIndex++
+				fileTrxIndex++	// 事务号
 			} else if sqlLower == "commit" {
 				trxStatus = C_trxCommit
 			} else if sqlLower == "rollback" {
@@ -292,22 +286,27 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			trxStatus = C_trxProcess
 		}
 
-
+		// 任务类型
 		if cfg.WorkType != "stats" {
-			ifSendEvent := false
-			if oneMyEvent.IfRowsEvent {
 
-				tbKey := GetAbsTableName(string(oneMyEvent.BinEvent.Table.Schema),
-						string(oneMyEvent.BinEvent.Table.Table))
-				_, err = G_TablesColumnsInfo.GetTableInfoJson(string(oneMyEvent.BinEvent.Table.Schema),
-						string(oneMyEvent.BinEvent.Table.Table))
+			// 是否需要发送
+			ifSendEvent := false
+
+			// 当前事件是 INSERT/UPDATE/DELETE 的 rows 事件
+			if oneMyEvent.IfRowsEvent {
+				// 构造库表名 db.tb
+				tbKey := GetAbsTableName(string(oneMyEvent.BinEvent.Table.Schema), string(oneMyEvent.BinEvent.Table.Table))
+				// 查询 db.tb 的表信息(字段、索引)
+				_, err = G_TablesColumnsInfo.GetTableInfoJson(string(oneMyEvent.BinEvent.Table.Schema), string(oneMyEvent.BinEvent.Table.Table))
 				if err != nil {
 					log.Fatalf(fmt.Sprintf("no table struct found for %s, it maybe dropped, skip it. RowsEvent position:%s",
 							tbKey, oneMyEvent.MyPos.String()))
 				}
+				// 需要将当前 event 发送出去
 				ifSendEvent = true
 			}
 
+			// 发送到管道 cfg.EventChan 上
 			if ifSendEvent {
 				fileBinEventHandlingIndex++
 				oneMyEvent.EventIdx = fileBinEventHandlingIndex
@@ -317,22 +316,40 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 				oneMyEvent.TrxStatus = trxStatus
 				cfg.EventChan <- *oneMyEvent
 			}
-
-
-		} 
-
-		//output analysis result whatever the WorkType is	
-		if sqlType != "" {
-			if sqlType == "query" {
-				cfg.StatChan <- BinEventStats{Timestamp: h.Timestamp, Binlog: *binlog, StartPos: h.LogPos - h.EventSize, StopPos: h.LogPos,
-					Database: db, Table: tb, QuerySql: sql, RowCnt: rowCnt, QueryType: sqlType}
-			} else {
-				cfg.StatChan <- BinEventStats{Timestamp: h.Timestamp, Binlog: *binlog, StartPos: tbMapPos, StopPos: h.LogPos,
-					Database: db, Table: tb, QuerySql: sql, RowCnt: rowCnt, QueryType: sqlType}
-			}
 		}
 
-
+		//output analysis result whatever the WorkType is
+		//
+		//
+		if sqlType != "" {
+			// 查询类型
+			if sqlType == "query" {
+				// 发送到管道 cfg.StatChan 上
+				cfg.StatChan <- BinEventStats{
+					Timestamp: h.Timestamp,
+					Binlog: *binlog,
+					StartPos: h.LogPos - h.EventSize, 	// ???
+					StopPos: h.LogPos,
+					Database: db,
+					Table: tb,
+					QuerySql: sql,
+					RowCnt: rowCnt,
+					QueryType: sqlType,
+				}
+			} else {
+				cfg.StatChan <- BinEventStats{
+					Timestamp: h.Timestamp,
+					Binlog: *binlog,
+					StartPos: tbMapPos,
+					StopPos: h.LogPos,
+					Database: db,
+					Table: tb,
+					QuerySql: sql,
+					RowCnt: rowCnt,
+					QueryType: sqlType,
+				}
+			}
+		}
 	}
 
 	return C_reFileEnd, nil

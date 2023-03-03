@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	
-	"github.com/siddontang/go-log/log"
+
 	"github.com/go-mysql-org/go-mysql/mysql"
-        "github.com/go-mysql-org/go-mysql/replication"
+	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/siddontang/go-log/log"
 )
 
 func ParserAllBinEventsFromRepl(cfg *ConfCmd) {
@@ -66,7 +66,6 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 		//orgSqlEvent *replication.RowsQueryEvent
 	)
 	for {
-
 		if cfg.OutputToScreen {
 			ev, err = cfg.BinlogStreamer.GetEvent(context.Background())
 			if err != nil {
@@ -95,7 +94,13 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 		}
 		ev.RawData = []byte{} // we donnot need raw data
 
-		oneMyEvent := &MyBinEvent{MyPos: mysql.Position{Name: currentBinlog, Pos: ev.Header.LogPos}, StartPos: tbMapPos}
+		oneMyEvent := &MyBinEvent{
+			MyPos: mysql.Position{
+				Name: currentBinlog,
+				Pos: ev.Header.LogPos,
+			},
+			StartPos: tbMapPos,
+		}
 		chkRe = oneMyEvent.CheckBinEvent(cfg, ev, &currentBinlog)
 		
 		if chkRe == C_reContinue {
@@ -137,11 +142,8 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 		if cfg.WorkType != "stats" {
 			ifSendEvent := false
 			if oneMyEvent.IfRowsEvent {
-
-				tbKey := GetAbsTableName(string(oneMyEvent.BinEvent.Table.Schema),
-						string(oneMyEvent.BinEvent.Table.Table))
-				_, err = G_TablesColumnsInfo.GetTableInfoJson(string(oneMyEvent.BinEvent.Table.Schema),
-						string(oneMyEvent.BinEvent.Table.Table))
+				tbKey := GetAbsTableName(string(oneMyEvent.BinEvent.Table.Schema), string(oneMyEvent.BinEvent.Table.Table))
+				_, err = G_TablesColumnsInfo.GetTableInfoJson(string(oneMyEvent.BinEvent.Table.Schema), string(oneMyEvent.BinEvent.Table.Table))
 				if err != nil {
 					log.Fatalf(fmt.Sprintf("no table struct found for %s, it maybe dropped, skip it. RowsEvent position:%s",
 							tbKey, oneMyEvent.MyPos.String()))
@@ -162,13 +164,30 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 		//output analysis result whatever the WorkType is	
 		if sqlType != "" {
 			if sqlType == "query" {
-				cfg.StatChan <- BinEventStats{Timestamp: ev.Header.Timestamp, Binlog: currentBinlog, StartPos: ev.Header.LogPos - ev.Header.EventSize, StopPos: ev.Header.LogPos,
-					Database: db, Table: tb, QuerySql: sql, RowCnt: rowCnt, QueryType: sqlType}
+				cfg.StatChan <- BinEventStats{
+					Timestamp: ev.Header.Timestamp,
+					Binlog: currentBinlog,
+					StartPos: ev.Header.LogPos - ev.Header.EventSize,
+					StopPos: ev.Header.LogPos,
+					Database: db,
+					Table: tb,
+					QuerySql: sql,
+					RowCnt: rowCnt,
+					QueryType: sqlType,
+				}
 			} else {
-				cfg.StatChan <- BinEventStats{Timestamp: ev.Header.Timestamp, Binlog: currentBinlog, StartPos: tbMapPos, StopPos: ev.Header.LogPos,
-					Database: db, Table: tb, QuerySql: sql, RowCnt: rowCnt, QueryType: sqlType}
+				cfg.StatChan <- BinEventStats{
+					Timestamp: ev.Header.Timestamp,
+					Binlog: currentBinlog,
+					StartPos: tbMapPos,
+					StopPos: ev.Header.LogPos,
+					Database: db,
+					Table: tb,
+					QuerySql: sql,
+					RowCnt: rowCnt,
+					QueryType: sqlType,
+				}
 			}
 		}
-		
 	}
 }

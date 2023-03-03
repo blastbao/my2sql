@@ -3,11 +3,11 @@ package base
 import (
 	"database/sql"
 	"fmt"
-	"strings"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/juju/errors"
 	"github.com/siddontang/go-log/log"
 	toolkits "my2sql/toolkits"
-	_ "github.com/go-sql-driver/mysql"
+	"strings"
 )
 
 const (
@@ -101,18 +101,24 @@ func CreateMysqlCon(mysqlUrl string) (*sql.DB, error) {
 	return db, nil
 }
 
+
+// GetTbDefFromDb 查询 mysql 服务器，获取 db.tb 的表信息(字段、索引)
 func (this *TablesColumnsInfo) GetTbDefFromDb(cfg *ConfCmd, dbname string, tbname string) {
 	//get table columns from DB
 	var err error
 	if cfg.FromDB == nil {
+		// 获取 mysql 服务器地址
 		sqlUrl := GetMysqlUrl(cfg)
+		// 创建 mysql 连接
 		cfg.FromDB, err = CreateMysqlCon(sqlUrl)
 		if err != nil {
 			log.Fatalf("fail to connect to mysql %v", err)
 		}
 	}
 
+	// 查询 mysql 服务器，获取 db.tb 的 columns 信息，保存到 this.tableInfos["db.tb"].Columns 上
 	this.GetTableColumns(cfg.FromDB, dbname, tbname)
+	// 查询 mysql 服务器，获取 db.tb 的 indexes 信息，保存到 this.tableInfos["db.tb"].PrimaryKey/UniqueKeys 上
 	this.GetTableKeysInfo(cfg.FromDB, dbname, tbname)
 }
 
@@ -137,6 +143,7 @@ func (this *TablesColumnsInfo) GetTableKeysInfo(db *sql.DB, dbName string, tbNam
 	}
 	defer rows.Close()
 
+	// 查询结果的列数
 	rowColumns, err := rows.Columns()
 	if err != nil {
 		log.Errorf("get columns name err %v",err)
@@ -155,20 +162,22 @@ func (this *TablesColumnsInfo) GetTableKeysInfo(db *sql.DB, dbName string, tbNam
 		| t     |          0 | ucd      |            2 | d           | A         |           0 |     NULL | NULL   | YES  | BTREE      |         |               |
 		+-------+------------+----------+--------------+-------------+-----------+-------------+----------+--------+------+------------+---------+---------------+
 	*/
-	
+
+	// 每一行是一个索引
 	for rows.Next() {
+		// row => values
 		data := make([]sql.RawBytes, len(rowColumns))
 		values := make([]interface{}, len(rowColumns))
 		for i := range values {
 			values[i] = &data[i]
 		}
-
 		err = rows.Scan(values...)
 		if err != nil {
 			log.Errorf("rows scan err %v",err)
 			return errors.Trace(err)
 		}
 
+		//
 		nonUnique := string(data[1])
 		if nonUnique == "0" {
 			//if strings.ToLower(string(data[2])) == "PRIMARY" {
@@ -251,6 +260,7 @@ func  (this *TablesColumnsInfo) GetTableColumns(db *sql.DB, dbname string, tbnam
 		return errors.New(er)
 	}
 
+	// 执行查询
 	query := fmt.Sprintf("SHOW COLUMNS FROM `%s`.`%s`", dbname, tbname)
 	rows, err := db.Query(query)
 	if err != nil {
@@ -259,6 +269,7 @@ func  (this *TablesColumnsInfo) GetTableColumns(db *sql.DB, dbname string, tbnam
 	}
 	defer rows.Close()
 
+	// 查询结果的列数
 	rowColumns, err := rows.Columns()
 	if err != nil {
 		log.Errorf("get rows columns err %v",err)
@@ -278,7 +289,10 @@ func  (this *TablesColumnsInfo) GetTableColumns(db *sql.DB, dbname string, tbnam
 	   +-------+---------+------+-----+---------+-------+
 	*/
 
+	// 库表名 db.tb
 	tbKey := GetAbsTableName(dbname, tbname)
+
+	// 遍历查询结果，每一行是一个 field 的信息，逐个追加保存到 dbTbFieldsInfo[tbKey] 中
 	for rows.Next() {
 		//err := rows.Scan(&colName, &dataType, &nullValue, &KeyValue, &defaultValue, &extraValue)
 		data := make([]sql.RawBytes, len(rowColumns))
@@ -286,30 +300,47 @@ func  (this *TablesColumnsInfo) GetTableColumns(db *sql.DB, dbname string, tbnam
 		for i := range values {
 			values[i] = &data[i]
 		}
+		// 把 rows 转存到 values 中
 		err = rows.Scan(values...)
 		if err != nil {
 			log.Errorf("rows scan err %v",err)
 			return errors.Trace(err)
 		}
+		// 初始化
 		_, ok := dbTbFieldsInfo[tbKey]
 		if !ok {
-			dbTbFieldsInfo[tbKey] = []FieldInfo{}
+			dbTbFieldsInfo[tbKey] = []FieldInfo{} // 空列表
 		}
-		dbTbFieldsInfo[tbKey] = append(dbTbFieldsInfo[tbKey], FieldInfo{FieldName: string(data[0]), FieldType: GetFiledType(string(data[1])), IsUnsigned: IsUnsigned(string(data[1]))})
+		// 保存字段名、字段类型、符号类型
+		dbTbFieldsInfo[tbKey] = append(dbTbFieldsInfo[tbKey], FieldInfo{
+			FieldName: string(data[0]),
+			FieldType: GetFiledType(string(data[1])),
+			IsUnsigned: IsUnsigned(string(data[1])),
+		})
 	}
+
+	// 初始化
 	if len(this.tableInfos) < 1 {
 		this.tableInfos = map[string]*TblInfoJson{}
 	}
-	this.tableInfos[tbKey] = &TblInfoJson{Database: dbname, Table: tbname, Columns: dbTbFieldsInfo[tbKey]}
+
+	// 保存 db.tb 对应的 fields 信息
+	this.tableInfos[tbKey] = &TblInfoJson{
+		Database: dbname,
+		Table: tbname,
+		Columns: dbTbFieldsInfo[tbKey],
+	}
 	return nil
 
 }
 
-
+// GetTableInfoJson 查询 mysql 服务器，获取 db.tb 的表信息(字段、索引)
 func (this *TablesColumnsInfo) GetTableInfoJson(schema string, table string) (*TblInfoJson, error) {
+	// 库表名 db.tb
 	tbKey := GetAbsTableName(schema, table)
 	tbDefsJson, ok := this.tableInfos[tbKey]
 	if !ok {
+		// 查询 mysql 服务器，获取 db.tb 的表信息(字段、索引)
 		this.GetTbDefFromDb(GConfCmd, schema, table)
 		tbDefsJson, ok = this.tableInfos[tbKey]
 		if !ok {
@@ -319,16 +350,23 @@ func (this *TablesColumnsInfo) GetTableInfoJson(schema string, table string) (*T
 	return tbDefsJson, nil
 }
 
+
+// GetOneUniqueKey 获取唯一键
 func (this *TblInfoJson) GetOneUniqueKey(uniqueFirst bool) KeyInfo {
+	// 第一个唯一键
 	if uniqueFirst {
 		if len(this.UniqueKeys) > 0 {
 			return this.UniqueKeys[0]
 		}
 	}
+
+	// 主键
 	if len(this.PrimaryKey) > 0 {
 		return this.PrimaryKey
+	// 第一个唯一键
 	} else if len(this.UniqueKeys) > 0 {
 		return this.UniqueKeys[0]
+	// 空
 	} else {
 		return KeyInfo{}
 	}
@@ -336,6 +374,7 @@ func (this *TblInfoJson) GetOneUniqueKey(uniqueFirst bool) KeyInfo {
 
 func GetColIndexFromKey(ki KeyInfo, columns []FieldInfo) []int {
 	arr := make([]int, len(ki))
+	// 遍历唯一键的各个列(联合键)，arr[i]=>j 表示第 i 个主键列对应库表的第 j 个列。
 	for j, colName := range ki {
 		for i, f := range columns {
 			if f.FieldName == colName {

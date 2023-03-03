@@ -2,9 +2,9 @@ package base
 
 import (
 	"fmt"
-	"github.com/siddontang/go-log/log"
 	"github.com/go-mysql-org/go-mysql/mysql"
-        "github.com/go-mysql-org/go-mysql/replication"
+	"github.com/go-mysql-org/go-mysql/replication"
+	"github.com/siddontang/go-log/log"
 	SQL "my2sql/sqlbuilder"
 	toolkits "my2sql/toolkits"
 	"strings"
@@ -27,7 +27,10 @@ func GetAllFieldNamesWithDroppedFields(rowLen int, colNames []FieldInfo) []Field
 	var arr []FieldInfo = make([]FieldInfo, rowLen)
 	cnt := copy(arr, colNames)
 	for i := cnt; i < rowLen; i++ {
-		arr[i] = FieldInfo{FieldName: GetDroppedFieldName(i - cnt), FieldType: C_unknownColType}
+		arr[i] = FieldInfo{
+			FieldName: GetDroppedFieldName(i - cnt),	// 字段名
+			FieldType: C_unknownColType,				// 字段类型
+		}
 	}
 	return arr
 }
@@ -36,7 +39,13 @@ func GetSqlFieldsEXpressions(colCnt int, colNames []FieldInfo, tbMap *replicatio
 	colDefExps := make([]SQL.NonAliasColumn, colCnt)
 	colTypeNames := make([]string, colCnt)
 	for i := 0; i < colCnt; i++ {
-		typeName, colDef := GetMysqlDataTypeNameAndSqlColumn(colNames[i].FieldType, colNames[i].FieldName, tbMap.ColumnType[i], tbMap.ColumnMeta[i])
+		//
+		typeName, colDef := GetMysqlDataTypeNameAndSqlColumn(
+			colNames[i].FieldType,
+			colNames[i].FieldName,
+			tbMap.ColumnType[i],
+			tbMap.ColumnMeta[i],
+		)
 		colDefExps[i] = colDef
 		colTypeNames[i] = typeName
 	}

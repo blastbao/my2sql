@@ -21,13 +21,13 @@ func main() {
 	if my.GConfCmd.WorkType != "stats" {
 		wg.Add(1)
 		go my.PrintExtraInfoForForwardRollbackupSql(my.GConfCmd, &wg)
+
+		// 启动 n 个协程，消费 cfg.EventChan 中的事件
 		for i := uint(1); i <= my.GConfCmd.Threads; i++ {
 			wgGenSql.Add(1)
 			go my.GenForwardRollbackSqlFromBinEvent(i, my.GConfCmd, &wgGenSql)
 		}
 	}
-
-
 
 	// repl：伪装成从库从主库获取 binlog 文件
 	if my.GConfCmd.Mode == "repl" {
@@ -41,6 +41,7 @@ func main() {
 			Parser: psr,
 		}.MyParseAllBinlogFiles(my.GConfCmd)
 	}
+
 	wgGenSql.Wait()
 	close(my.GConfCmd.SqlChan)
 	wg.Wait() 
