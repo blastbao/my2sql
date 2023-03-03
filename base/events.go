@@ -70,6 +70,7 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 			continue
 		}
 
+		// 解析事件，获取基础属性
 		posStr = GetPosStr(ev.MyPos.Name, ev.StartPos, ev.MyPos.Pos) // 事件的 Pos
 		db = string(ev.BinEvent.Table.Schema)
 		tb = string(ev.BinEvent.Table.Table)
@@ -87,7 +88,7 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 
 		// 列数目
 		colCnt = len(ev.BinEvent.Rows[0])
-		//
+		// 获取所有字段的定义
 		allColNames = GetAllFieldNamesWithDroppedFields(colCnt, tbInfo.Columns)
 		// 列定义s，列类型s
 		colsDef, colsTypeName = GetSqlFieldsEXpressions(colCnt, allColNames, ev.BinEvent.Table)
@@ -96,7 +97,6 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 		if len(colsTypeName) > len(tbInfo.Columns) {
 			log.Fatalf("%s column count %d in binlog > in table structure %d, usually means DDL in the middle", fulltb, len(colsTypeName), len(tbInfo.Columns))
 		}
-
 
 		//
 		for ci, colType := range colsTypeName {
@@ -169,9 +169,29 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 		// 生成 sql 语句
 		if ev.SqlType == "insert" {
 			if ifRollback {
-				sqlArr = GenDeleteSqlsForOneRowsEventRollbackInsert(posStr, ev.BinEvent, colsDef, uniqueKeyIdx, cfg.FullColumns, cfg.SqlTblPrefixDb)
+
+				sqlArr = GenDeleteSqlsForOneRowsEventRollbackInsert(
+					posStr,
+					ev.BinEvent,
+					colsDef,
+					uniqueKeyIdx,
+					cfg.FullColumns,
+					cfg.SqlTblPrefixDb,
+				)
+
 			} else {
-				sqlArr = GenInsertSqlsForOneRowsEvent(posStr, ev.BinEvent, colsDef, 1, false, cfg.SqlTblPrefixDb, ifIgnorePrimary, primaryKeyIdx)
+
+				sqlArr = GenInsertSqlsForOneRowsEvent(
+					posStr,
+					ev.BinEvent,
+					colsDef,
+					1,
+					false,
+					cfg.SqlTblPrefixDb,
+					ifIgnorePrimary,
+					primaryKeyIdx,
+				)
+
 			}
 		} else if ev.SqlType == "delete" {
 			if ifRollback {

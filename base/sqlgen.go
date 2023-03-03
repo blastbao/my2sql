@@ -20,12 +20,22 @@ func GetDroppedFieldName(idx int) string {
 	return fmt.Sprintf("%s%d", C_unknownColPrefix, idx)
 }
 
+// GetAllFieldNamesWithDroppedFields
+//
+// 	rowLen: 当前 row 的列数目
+//  colNames: 数据库表定义中的列数目
 func GetAllFieldNamesWithDroppedFields(rowLen int, colNames []FieldInfo) []FieldInfo {
+	// 不匹配，返回定义的列数目
 	if rowLen <= len(colNames) {
 		return colNames
 	}
+
+	// 至此，rowlen 大于等于 len(colNames) ...
 	var arr []FieldInfo = make([]FieldInfo, rowLen)
+
+	// 先拷贝 0..len(colNames)
 	cnt := copy(arr, colNames)
+	// 再填入空字段 len(colNames) .. rowlen
 	for i := cnt; i < rowLen; i++ {
 		arr[i] = FieldInfo{
 			FieldName: GetDroppedFieldName(i - cnt),	// 字段名
@@ -35,9 +45,18 @@ func GetAllFieldNamesWithDroppedFields(rowLen int, colNames []FieldInfo) []Field
 	return arr
 }
 
+// GetSqlFieldsEXpressions
+//
+// 	colCnt: 列数目
+//  colNames: 列信息
+//  tbMap:
 func GetSqlFieldsEXpressions(colCnt int, colNames []FieldInfo, tbMap *replication.TableMapEvent) ([]SQL.NonAliasColumn, []string) {
+
+
 	colDefExps := make([]SQL.NonAliasColumn, colCnt)
 	colTypeNames := make([]string, colCnt)
+
+
 	for i := 0; i < colCnt; i++ {
 		//
 		typeName, colDef := GetMysqlDataTypeNameAndSqlColumn(
@@ -66,6 +85,8 @@ func GetMysqlDataTypeNameAndSqlColumn(tpDef string, colName string, tp byte, met
 			}
 		}
 	}
+
+
 	//fmt.Println("column type:", colName, tp)
 	switch tp {
 
@@ -143,7 +164,17 @@ func GetMysqlDataTypeNameAndSqlColumn(tpDef string, colName string, tp byte, met
 	}
 }
 
-func GenInsertSqlsForOneRowsEvent(posStr string, rEv *replication.RowsEvent, colDefs []SQL.NonAliasColumn, rowsPerSql int, ifRollback bool, ifprefixDb bool, ifIgnorePrimary bool, primaryIdx []int) []string {
+func GenInsertSqlsForOneRowsEvent(
+	posStr string,
+	rEv *replication.RowsEvent,
+	colDefs []SQL.NonAliasColumn,
+	rowsPerSql int,						// 一条 sql 负责几个 rows 的插入
+	ifRollback bool,
+	ifprefixDb bool,
+	ifIgnorePrimary bool,
+	primaryIdx []int,
+) []string {
+
 	var (
 		insertSql  SQL.InsertStatement
 		oneSql     string
@@ -165,25 +196,35 @@ func GenInsertSqlsForOneRowsEvent(posStr string, rEv *replication.RowsEvent, col
 		sqlType = "insert"
 	}
 
+
 	if len(primaryIdx) == 0 {
 		ifIgnorePrimary = false
 	}
+
 	if ifIgnorePrimary {
 		newColDefs = GetColDefIgnorePrimary(colDefs, primaryIdx)
 	}
+
+	// 每次处理 rowsPerSql 个 rows ，生成一条插入语句
 	for i = 0; i < rowCnt; i += rowsPerSql {
+		// 构造插入语句
 		insertSql = SQL.NewTable(table, newColDefs...).Insert(newColDefs...)
+		// 边界处理，最后一批 rows
 		endIndex = GetMinValue(rowCnt, i+rowsPerSql)
+
+		// 把 rEv.Rows[i:endIndex] 填入到 insertSql 中，生成插入语句
 		oneSql, err = GenInsertSqlForRows(rEv.Rows[i:endIndex], insertSql, schema, ifprefixDb, ifIgnorePrimary, primaryIdx)
 		if err != nil {
 			log.Fatalf(fmt.Sprintf("Fail to generate %s sql for %s %s \n\terror: %v\n\trows data:%v",
 				sqlType, GetAbsTableName(schema, table), posStr, err, rEv.Rows[i:endIndex]))
 		} else {
+			// 保存生成的语句
 			sqlArr = append(sqlArr, oneSql)
 		}
 
 	}
 
+	// 剩余 rows 处理一下 （应该不会出现?)
 	if endIndex < rowCnt {
 		insertSql = SQL.NewTable(table, newColDefs...).Insert(newColDefs...)
 		oneSql, err = GenInsertSqlForRows(rEv.Rows[endIndex:rowCnt], insertSql, schema, ifprefixDb, ifIgnorePrimary, primaryIdx)
@@ -194,6 +235,8 @@ func GenInsertSqlsForOneRowsEvent(posStr string, rEv *replication.RowsEvent, col
 			sqlArr = append(sqlArr, oneSql)
 		}
 	}
+
+
 	//fmt.Println("one insert sqlArr", sqlArr)
 	return sqlArr
 
@@ -222,15 +265,18 @@ func ConvertRowToExpressRow(row []interface{}, ifIgnorePrimary bool, primaryIdx 
 		vExp := SQL.Literal(val)
 		valueInserted = append(valueInserted, vExp)
 	}
+
 	return valueInserted
 }
 
 func GenInsertSqlForRows(rows [][]interface{}, insertSql SQL.InsertStatement, schema string, ifprefixDb bool, ifIgnorePrimary bool, primaryIdx []int) (string, error) {
 
+	// 遍历 rows ，填入 insertSql 中
 	for _, row := range rows {
 		valuesInserted := ConvertRowToExpressRow(row, ifIgnorePrimary, primaryIdx)
 		insertSql.Add(valuesInserted...)
 	}
+
 	if !ifprefixDb {
 		schema = ""
 	}
@@ -243,7 +289,16 @@ func GenDeleteSqlsForOneRowsEventRollbackInsert(posStr string, rEv *replication.
 	return GenDeleteSqlsForOneRowsEvent(posStr, rEv, colDefs, uniKey, ifFullImage, true, ifprefixDb)
 }
 
-func GenDeleteSqlsForOneRowsEvent(posStr string, rEv *replication.RowsEvent, colDefs []SQL.NonAliasColumn, uniKey []int, ifFullImage bool, ifRollback bool, ifprefixDb bool) []string {
+func GenDeleteSqlsForOneRowsEvent(
+	posStr string,
+	rEv *replication.RowsEvent,
+	colDefs []SQL.NonAliasColumn,
+	uniKey []int,						// 唯一 key
+	ifFullImage bool,
+	ifRollback bool,
+	ifprefixDb bool,
+) []string {
+
 	rowCnt := len(rEv.Rows)
 	sqlArr := make([]string, rowCnt)
 	//var sqlArr []string
@@ -260,9 +315,11 @@ func GenDeleteSqlsForOneRowsEvent(posStr string, rEv *replication.RowsEvent, col
 	} else {
 		sqlType = "delete"
 	}
-	for i, row := range rEv.Rows {
-		whereCond := GenEqualConditions(row, colDefs, uniKey, ifFullImage)
 
+	for i, row := range rEv.Rows {
+		//
+		whereCond := GenEqualConditions(row, colDefs, uniKey, ifFullImage)
+		//
 		sql, err := SQL.NewTable(table, colDefs...).Delete().Where(SQL.And(whereCond...)).String(schemaInSql)
 		if err != nil {
 			log.Fatalf(fmt.Sprintf("Fail to generate %s sql for %s %s \n\terror: %s\n\trows data:%v",
@@ -276,6 +333,7 @@ func GenDeleteSqlsForOneRowsEvent(posStr string, rEv *replication.RowsEvent, col
 }
 
 func GenEqualConditions(row []interface{}, colDefs []SQL.NonAliasColumn, uniKey []int, ifFullImage bool) []SQL.BoolExpression {
+
 	if !ifFullImage && len(uniKey) > 0 {
 		expArrs := make([]SQL.BoolExpression, len(uniKey))
 		for k, idx := range uniKey {
@@ -283,10 +341,13 @@ func GenEqualConditions(row []interface{}, colDefs []SQL.NonAliasColumn, uniKey 
 		}
 		return expArrs
 	}
+
+
 	expArrs := make([]SQL.BoolExpression, len(row))
 	for i, v := range row {
 		expArrs[i] = SQL.EqL(colDefs[i], v)
 	}
+
 	return expArrs
 }
 

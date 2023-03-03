@@ -166,7 +166,7 @@ type ConfCmd struct {
 	FullColumns    bool
 	InsertRows     int
 	KeepTrx        bool
-	SqlTblPrefixDb bool
+	SqlTblPrefixDb bool	// ???
 	FilePerTable   bool
 
 	PrintExtraInfo bool

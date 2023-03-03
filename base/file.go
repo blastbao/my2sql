@@ -15,18 +15,14 @@ import (
 	toolkits "my2sql/toolkits"
 )
 
-
 var (
-	fileBinEventHandlingIndex uint64 = 0
-	fileTrxIndex              uint64 = 0
+	fileBinEventHandlingIndex uint64 = 0	// 当前已解析的 binlog 文件下标，从 0 开始
+	fileTrxIndex              uint64 = 0	// 当前已解析的事务总数
 )
-
 
 type BinFileParser struct {
 	Parser *replication.BinlogParser
 }
-
-
 
 // [root@10-186-61-119 binlog]# ll
 // total 4579116
@@ -38,6 +34,8 @@ type BinFileParser struct {
 //	-rw-r----- 1 mysql mysql  392707488 Aug  3 16:16 mysql-bin.000015
 //	-rw-r----- 1 mysql mysql        246 Aug  3 16:15 mysql-bin.index
 
+
+// MyParseAllBinlogFiles 逐个 binlog 文件进行解析，解析结果会通过 cfg 中的管道传出去。
 func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 	defer cfg.CloseChan()
 	log.Info("start to parse binlog from local files")
@@ -138,7 +136,6 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 	)
 
 	for {
-
 		// 读取 19B 事件头
 		headBuf := make([]byte, replication.EventHeaderSize)
 		if _, err = io.ReadFull(r, headBuf); err == io.EOF {
@@ -147,7 +144,6 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			log.Error(fmt.Sprintf("fail to read binlog event header of %s %v", *binlog, err))
 			return C_reBreak, errors.Trace(err)
 		}
-
 		// 解析事件头
 		var h *replication.EventHeader
 		h, err = this.Parser.ParseHeader(headBuf)
@@ -156,14 +152,12 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			return C_reBreak, errors.Trace(err)
 		}
 		//fmt.Printf("parsing %s %d %s\n", *binlog, h.LogPos, GetDatetimeStr(int64(h.Timestamp), int64(0), DATETIME_FORMAT))
-
 		// 校验
 		if h.EventSize <= uint32(replication.EventHeaderSize) {
 			err = errors.Errorf("invalid event header, event size is %d, too small", h.EventSize)
 			log.Error("%v", err)
 			return C_reBreak, err
 		}
-
 		// 读取 size 事件体
 		var buf bytes.Buffer
 		if n, err = io.CopyN(&buf, r, int64(h.EventSize)-int64(replication.EventHeaderSize)); err != nil {
@@ -173,13 +167,11 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 		}
 
 		//h.Dump(os.Stdout)
-
 		// 拼接 head 和 body
 		data := buf.Bytes()
 		var rawData []byte
 		rawData = append(rawData, headBuf...)
 		rawData = append(rawData, data...)
-
 		// 校验
 		eventLen := int(h.EventSize) - replication.EventHeaderSize
 		if len(data) != eventLen {
