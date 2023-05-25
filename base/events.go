@@ -37,7 +37,6 @@ var (
 )
 
 func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup) {
-
 	defer wg.Done()
 
 	var (

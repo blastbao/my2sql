@@ -79,6 +79,7 @@ func GetMysqlUrl(cfg *ConfCmd) string {
 
 }
 
+// CreateMysqlCon 建立 Mysql 连接
 func CreateMysqlCon(mysqlUrl string) (*sql.DB, error) {
 	db, err := sql.Open("mysql", mysqlUrl)
 
@@ -101,13 +102,12 @@ func CreateMysqlCon(mysqlUrl string) (*sql.DB, error) {
 	return db, nil
 }
 
-
 // GetTbDefFromDb 查询 mysql 服务器，获取 db.tb 的表信息(字段、索引)
 func (this *TablesColumnsInfo) GetTbDefFromDb(cfg *ConfCmd, dbname string, tbname string) {
 	//get table columns from DB
 	var err error
 	if cfg.FromDB == nil {
-		// 获取 mysql 服务器地址
+		// 构造 mysql 地址
 		sqlUrl := GetMysqlUrl(cfg)
 		// 创建 mysql 连接
 		cfg.FromDB, err = CreateMysqlCon(sqlUrl)
@@ -125,6 +125,8 @@ func (this *TablesColumnsInfo) GetTbDefFromDb(cfg *ConfCmd, dbname string, tbnam
 func (this *TablesColumnsInfo) GetTableKeysInfo(db *sql.DB, dbName string, tbName string) error {
 	var (
 		ok                    bool
+
+		// db => table =>
 		dbTbKeysInfo          map[string]map[string]map[string]KeyInfo = map[string]map[string]map[string]KeyInfo{}
 		primaryKeys           map[string]map[string]map[string]bool    = map[string]map[string]map[string]bool{}
 	)
@@ -171,17 +173,20 @@ func (this *TablesColumnsInfo) GetTableKeysInfo(db *sql.DB, dbName string, tbNam
 		for i := range values {
 			values[i] = &data[i]
 		}
+
+		// 读取一行数据
 		err = rows.Scan(values...)
 		if err != nil {
 			log.Errorf("rows scan err %v",err)
 			return errors.Trace(err)
 		}
 
-		//
+		// 字段 `Non_unique`
 		nonUnique := string(data[1])
 		if nonUnique == "0" {
 			//if strings.ToLower(string(data[2])) == "PRIMARY" {
 			//}
+
 			_, ok = dbTbKeysInfo[dbName]
 			if !ok {
 				dbTbKeysInfo[dbName] = map[string]map[string]KeyInfo{}
@@ -190,16 +195,21 @@ func (this *TablesColumnsInfo) GetTableKeysInfo(db *sql.DB, dbName string, tbNam
 			if !ok {
 				dbTbKeysInfo[dbName][tbName] = map[string]KeyInfo{}
 			}
+
+			// 字段 `Key_name`
 			kName := string(data[2])
 			_, ok = dbTbKeysInfo[dbName][tbName][kName]
 			if !ok {
 				dbTbKeysInfo[dbName][tbName][kName] = KeyInfo{}
 			}
+
+			// 字段 `Column_name`
 			colName := string(data[4])
 			if !toolkits.ContainsString(dbTbKeysInfo[dbName][tbName][kName], colName) {
 				dbTbKeysInfo[dbName][tbName][kName] = append(dbTbKeysInfo[dbName][tbName][kName], colName)
 			}
 
+			// 如果当前 `Key_name` 为 "primary" ，则把 primaryKeys[dbName][tbName][kName] 置为 true 。
 			if strings.Contains(strings.ToLower(kName), "primary") {
 				_, ok = primaryKeys[dbName]
 				if !ok {
@@ -215,19 +225,34 @@ func (this *TablesColumnsInfo) GetTableKeysInfo(db *sql.DB, dbName string, tbNam
 	}
 
 	var isPrimay bool = false
+
+	// 构造库表名 db.tb
 	tbKey := GetAbsTableName(dbName, tbName)
+
+	// 初始化本地缓存
 	if len(this.tableInfos) < 1 {
 		this.tableInfos = map[string]*TblInfoJson{}
 	}
+
+	// 若本地缓存不存在该库表，初始化一个空对象
 	_, ok = this.tableInfos[tbKey]
 	if !ok {
 		this.tableInfos[tbKey] = &TblInfoJson{
-			Database: dbName, Table: tbName,
-			PrimaryKey: KeyInfo{}, UniqueKeys: []KeyInfo{}}
+			Database: dbName,
+			Table: tbName,
+			PrimaryKey: KeyInfo{},
+			UniqueKeys: []KeyInfo{},
+		}
 	}
+
+	// 主键
 	this.tableInfos[tbKey].PrimaryKey = KeyInfo{}
+	// 唯一键
 	this.tableInfos[tbKey].UniqueKeys = []KeyInfo{}
+
+	// 遍历
 	for kname, kcolumn := range dbTbKeysInfo[dbName][tbName] {
+		// 是否为主键
 		isPrimay = false
 		_, ok = primaryKeys[dbName]
 		if ok {
@@ -239,8 +264,11 @@ func (this *TablesColumnsInfo) GetTableKeysInfo(db *sql.DB, dbName string, tbNam
 				}
 			}
 		}
+
+		// 保存 db.tb 的主键列
 		if isPrimay {
 			this.tableInfos[tbKey].PrimaryKey = kcolumn
+		// 保存 db.tb 的唯一键列
 		} else {
 			this.tableInfos[tbKey].UniqueKeys = append(this.tableInfos[tbKey].UniqueKeys, kcolumn)
 		}
@@ -330,14 +358,16 @@ func  (this *TablesColumnsInfo) GetTableColumns(db *sql.DB, dbname string, tbnam
 		Table: tbname,
 		Columns: dbTbFieldsInfo[tbKey],
 	}
+
 	return nil
 
 }
 
 // GetTableInfoJson 查询 mysql 服务器，获取 db.tb 的表信息(字段、索引)
 func (this *TablesColumnsInfo) GetTableInfoJson(schema string, table string) (*TblInfoJson, error) {
-	// 库表名 db.tb
+	// 构造库表名 db.tb
 	tbKey := GetAbsTableName(schema, table)
+	// 获取缓存的 db.tb 元信息，不存在则查询 Mysql 服务器获取
 	tbDefsJson, ok := this.tableInfos[tbKey]
 	if !ok {
 		// 查询 mysql 服务器，获取 db.tb 的表信息(字段、索引)

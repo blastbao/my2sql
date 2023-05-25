@@ -70,11 +70,11 @@ var (
 	//GThreadsFinished          = &Threads_Finish_Status{finishedThreadsCnt: 0, threadsCnt: 0}
 )
 
-
 // 限制
 //	my2sql 是模拟一个从库去在线获取主库 binlog，然后进行解析，因此执行操作的数据库用户需要具有 SELECT，REPLICATION SALVE，REPLICATION CLIENT 的权限。
 //	与 binlog2sql、MyFlash 差不多，my2sql 目前也不支持 8.0；闪回功能需要开启 binlog_format=row，binlog_row_image=full；只能闪回 DML 操作，不支持 DDL 的闪回。
 //	无法离线解析 binlog（MyFlash 支持）。
+//
 //	不能以 GTID 事务为单位进行解析（MyFlash 支持），具体 file+pos 点位需要先通过手工解析 binlog 后确认。
 //	闪回/前滚 SQL 中，没有提供具体的 begin/commit 的位置，使用时无法分隔事务，需要人工判断。
 //	使用事务分析功能时，只能给出具体的大/长事务发生时间、点位、涉及的对象和操作类型，不能给出具体的 SQL 语句，完整的语句仍然需要去 binlog 中进行查看（需设置 binlog_rows_query_log_events=on）
@@ -101,7 +101,6 @@ var (
 // -output-dir：指定文件生成目录
 // -output-toScreen：指定输出到屏幕
 // -tl：指定时区（time location），默认为 local（Asia/Shanghai）
-//
 //
 //	-mode				repl：伪装成从库从主库获取 binlog 文件；file：从本地文件系统获取 binlog 文件，默认repl
 //	-local-binlog-file 	当指定	当指定-mode=file参数时，需要指定 -local-binlog-file binlog 文件相对路径或绝对路径
@@ -403,6 +402,8 @@ func (this *ConfCmd) ParseCmdOptions() {
 	this.StatChan = make(chan BinEventStats, this.Threads*2)
 	this.SqlChan = make(chan ForwardRollbackSqlOfPrint, this.Threads*2)
 	this.StatChan = make(chan BinEventStats, this.Threads*2)
+
+
 	this.OpenStatsResultFiles()
 	this.OpenTxResultFiles()
 
@@ -573,12 +574,14 @@ func (this *ConfCmd) IsTargetDml(dml string) bool {
 	}
 }
 
+// OpenStatsResultFiles 保存 binlog 的统计信息。
 func (this *ConfCmd) OpenStatsResultFiles() {
 	statFile := filepath.Join(this.OutputDir, "binlog_status.txt")
 	statFH, err := os.OpenFile(statFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		log.Fatalf("fail to open file %v"+statFile, err)
 	}
+	// 写入头部：[binlog, starttime, stoptime, startpos, stoppos, inserts, updates, deletes, database, table]
 	statFH.WriteString(GetStatsPrintHeaderLine(Stats_Result_Header_Column_names))
 	this.StatFH = statFH
 }
@@ -592,7 +595,6 @@ func (this *ConfCmd) OpenTxResultFiles() {
 	biglongFH.WriteString(GetBigLongTrxPrintHeaderLine(Stats_BigLongTrx_Header_Column_names))
 	this.BiglongFH = biglongFH
 }
-
 
 func (this *ConfCmd) CloseFH(){
 	this.StatFH.Close()

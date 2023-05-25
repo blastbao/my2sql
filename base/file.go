@@ -40,7 +40,7 @@ func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 	defer cfg.CloseChan()
 	log.Info("start to parse binlog from local files")
 
-	// 提取配置
+	// 提取配置：binlog 文件名、binlog 位置偏移
 	binlog, binpos := GetFirstBinlogPosToParse(cfg)
 
 	// 将 mysql3306-bin.000004 解析成 mysql3306-bin, 4
@@ -48,7 +48,7 @@ func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 	log.Info(fmt.Sprintf("start to parse %s %d\n", binlog, binpos))
 
 	for {
-		// 如果设置了 stop pos ，会自动停止
+		// 如果设置了 stop pos ，读到指定位置会自动停止
 		if cfg.IfSetStopFilePos {
 			if cfg.StopFilePos.Compare(mysql.Position{Name: filepath.Base(binlog), Pos: 4}) < 1 {
 				break

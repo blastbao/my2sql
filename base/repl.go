@@ -18,6 +18,8 @@ func ParserAllBinEventsFromRepl(cfg *ConfCmd) {
 	log.Info("finish getting binlog from mysql")
 }
 
+
+// NewReplBinlogStreamer 创建一个 mysql syncer
 func NewReplBinlogStreamer(cfg *ConfCmd) *replication.BinlogStreamer {
 	replCfg := replication.BinlogSyncerConfig{
 		ServerID:                uint32(cfg.ServerId),
@@ -35,11 +37,16 @@ func NewReplBinlogStreamer(cfg *ConfCmd) *replication.BinlogStreamer {
 
 	replSyncer := replication.NewBinlogSyncer(replCfg)
 
-	syncPosition := mysql.Position{Name: cfg.StartFile, Pos: uint32(cfg.StartPos)}
+	syncPosition := mysql.Position{
+		Name: cfg.StartFile,
+		Pos: uint32(cfg.StartPos),
+	}
+
 	replStreamer, err := replSyncer.StartSync(syncPosition)
 	if err != nil {
 		log.Fatalf(fmt.Sprintf("error replication from master %s:%d %v", cfg.Host, cfg.Port, err))
 	}
+
 	return replStreamer
 }
 
@@ -65,14 +72,18 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 		//justStart   bool = true
 		//orgSqlEvent *replication.RowsQueryEvent
 	)
+
 	for {
+		// 输出到屏幕
 		if cfg.OutputToScreen {
+			// 读取一个 Event (阻塞式）
 			ev, err = cfg.BinlogStreamer.GetEvent(context.Background())
 			if err != nil {
 				log.Fatalf(fmt.Sprintf("error to get binlog event"))
 				break
 			}
 		} else{
+			// 读取一个 Event ，指定超时时间
 			ctx, cancel := context.WithTimeout(context.Background(), EventTimeout)
 			ev, err = cfg.BinlogStreamer.GetEvent(ctx)
 			cancel()
@@ -88,12 +99,16 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 			}
 		}
 
+		// 如果是 `TABLE_MAP_EVENT` 事件
 		if ev.Header.EventType == replication.TABLE_MAP_EVENT {
 			tbMapPos = ev.Header.LogPos - ev.Header.EventSize 
 			// avoid mysqlbing mask the row event as unknown table row event
 		}
+
+		// 清空 RawData
 		ev.RawData = []byte{} // we donnot need raw data
 
+		// 转换
 		oneMyEvent := &MyBinEvent{
 			MyPos: mysql.Position{
 				Name: currentBinlog,
@@ -101,8 +116,8 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 			},
 			StartPos: tbMapPos,
 		}
+
 		chkRe = oneMyEvent.CheckBinEvent(cfg, ev, &currentBinlog)
-		
 		if chkRe == C_reContinue {
 			continue
 		} else if chkRe == C_reBreak {
@@ -111,6 +126,7 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 			continue
 		}
 
+		// 解析 event ，得到库、表、sql 语句、sql 类型、数据行数目
 		db, tb, sqlType, sql, rowCnt = GetDbTbAndQueryAndRowCntFromBinevent(ev)
 		//if find := strings.Contains(db, "#"); find {
 		//	log.Fatalf(fmt.Sprintf("Unsupported database name %s contains special character '#'", db))
@@ -120,7 +136,8 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 		//	log.Fatalf(fmt.Sprintf("Unsupported table name %s.%s contains special character '#'", db, tb))
 		//	break
 		//}
-	
+
+		// 查询语句
 		if sqlType == "query" {
 			sqlLower = strings.ToLower(sql)
 			if sqlLower == "begin" {
@@ -134,11 +151,11 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 				trxStatus = C_trxProcess
 				rowCnt = 1
 			}
-
 		} else {
 			trxStatus = C_trxProcess
 		}
 
+		// -work-type：指定工作类型（前滚、闪回、事务分析），合法值分别为：2sql（默认）、rollback、stats
 		if cfg.WorkType != "stats" {
 			ifSendEvent := false
 			if oneMyEvent.IfRowsEvent {

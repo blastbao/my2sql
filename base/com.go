@@ -68,6 +68,7 @@ func (e *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent, cu
 
 	// 过滤
 	if cfg.IfSetStartFilePos {
+		// 如果当前 myPos 小于 cfg.StartFilePos ，就 Continue 。
 		cmpRe := myPos.Compare(cfg.StartFilePos)
 		if cmpRe == -1 {
 			return C_reContinue
@@ -75,21 +76,26 @@ func (e *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent, cu
 	}
 	// 过滤
 	if cfg.IfSetStopFilePos {
+		// 如果当前 myPos 大于等于 cfg.StopFilePos ，就 Break 。
 		cmpRe := myPos.Compare(cfg.StopFilePos)
 		if cmpRe >= 0 {
 			log.Infof("stop to get event. StopFilePos set. currentBinlog %s StopFilePos %s", myPos.String(), cfg.StopFilePos.String())
 			return C_reBreak
 		}
 	}
+
 	//fmt.Println(cfg.StartDatetime, cfg.StopDatetime, header.Timestamp)
 	// 过滤
 	if cfg.IfSetStartDateTime {
+		// 如果当前 event 的时间早于 cfg.StartDatetime ，就 Continue 。
 		if ev.Header.Timestamp < cfg.StartDatetime {
 			return C_reContinue
 		}
 	}
+
 	// 过滤
 	if cfg.IfSetStopDateTime {
+		// 如果当前 event 的时间晚于 cfg.StopDatetime ，就 Break 。
 		if ev.Header.Timestamp >= cfg.StopDatetime {
 			log.Infof("stop to get event. StopDateTime set. current event Timestamp %d Stop DateTime  Timestamp %d", ev.Header.Timestamp, cfg.StopDatetime)
 			return C_reBreak
@@ -101,6 +107,7 @@ func (e *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent, cu
 		goto BinEventCheck
 	}
 
+	// ???
 	if ev.Header.EventType == replication.WRITE_ROWS_EVENTv1 || ev.Header.EventType == replication.WRITE_ROWS_EVENTv2 {
 		if cfg.IsTargetDml("insert") {
 			goto BinEventCheck
@@ -125,6 +132,8 @@ func (e *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent, cu
 		}
 	}
 
+
+
 BinEventCheck:
 
 	switch ev.Header.EventType {
@@ -143,28 +152,28 @@ BinEventCheck:
 			return C_reContinue
 		}*/
 
-		// 检查是否是目标 db
+		// 检查是否是目标 db ，不是则 continue
 		if len(cfg.Databases) > 0 {
 			if !toolkits.ContainsString(cfg.Databases, db) {
 				return C_reContinue
 			}
 		}
 
-		// 检查是否是目标 table
+		// 检查是否是目标 table ，不是则 continue
 		if len(cfg.Tables) > 0 {
 			if !toolkits.ContainsString(cfg.Tables, tb) {
 				return C_reContinue
 			}
 		}
 
-		// 检查是否是忽略 dbs
+		// 检查是否是忽略 dbs ，是则 continue
 		if len(cfg.IgnoreDatabases) > 0 {
 			if toolkits.ContainsString(cfg.IgnoreDatabases, db) {
 				return C_reContinue
 			}
 		}
 
-		// 检查是否是忽略 tables
+		// 检查是否是忽略 tables ，是则 continue
 		if len(cfg.IgnoreTables) > 0 {
 			if toolkits.ContainsString(cfg.IgnoreTables, tb) {
 				return C_reContinue
@@ -267,14 +276,14 @@ func GetFirstBinlogPosToParse(cfg *ConfCmd) (string, int64) {
 	var binlog string
 	var pos int64
 
-	// 如果指定了起始文件
+	// 如果指定了起始 binlog 文件
 	if cfg.StartFile != "" {
 		binlog = filepath.Join(cfg.BinlogDir, cfg.StartFile)
 	} else {
 		binlog = cfg.GivenBinlogFile // 未指定，则读取指定 binlog 文件
 	}
 
-	// 如果制定了起始偏移
+	// 如果指定了起始偏移
 	if cfg.StartPos != 0 {
 		pos = int64(cfg.StartPos)
 	} else {
