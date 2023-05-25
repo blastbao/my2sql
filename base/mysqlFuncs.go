@@ -36,9 +36,9 @@ type KeyInfo []string
 //type FieldInfo map[string]string //{"name":"col1", "type":"int"}
 
 type FieldInfo struct {
-	FieldName	string `json:"column_name"`
-	FieldType	string `json:"column_type"`
-	IsUnsigned	bool	`json:"is_unsigned"`
+	FieldName	string `json:"column_name"`		// 字段名
+	FieldType	string `json:"column_type"`		// 字段类型
+	IsUnsigned	bool	`json:"is_unsigned"`	// 有符号
 }
 
 type TblInfoJson struct {

@@ -16,6 +16,8 @@ func main() {
 	}
 	var wg, wgGenSql sync.WaitGroup
 	wg.Add(1)
+
+	//
 	go my.ProcessBinEventStats(my.GConfCmd, &wg)
 
 	if my.GConfCmd.WorkType != "stats" {

@@ -10,9 +10,17 @@ import (
 	"github.com/siddontang/go-log/log"
 )
 
-func ReverseFileGo(threadIdx int, rollbackFileChan chan map[string]string, bytesCntFiles map[string][][]int, keepTrx bool, wg *sync.WaitGroup) {
+func ReverseFileGo(
+	threadIdx int,
+	rollbackFileChan chan map[string]string,
+	bytesCntFiles map[string][][]int,
+	keepTrx bool,
+	wg *sync.WaitGroup,
+) {
 	defer wg.Done()
 	log.Infof("start thread %d to revert rollback sql files", threadIdx)
+
+	//
 	for arr := range rollbackFileChan {
 		//ReverseFileToNewFile(arr["tmp"], arr["rollback"], batchLines)
 		//ReverseFileToNewFileOneByOneLineAndKeepTrx(arr["tmp"], arr["rollback"])
@@ -22,6 +30,7 @@ func ReverseFileGo(threadIdx int, rollbackFileChan chan map[string]string, bytes
 			log.Fatalf("fail to remove tmp file %s", arr["tmp"])
 		}
 	}
+
 	log.Infof(fmt.Sprintf("exit thread %d to revert rollback sql files", threadIdx))
 }
 

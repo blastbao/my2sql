@@ -35,6 +35,7 @@ func GetAllFieldNamesWithDroppedFields(rowLen int, colNames []FieldInfo) []Field
 
 	// 先拷贝 0..len(colNames)
 	cnt := copy(arr, colNames)
+
 	// 再填入空字段 len(colNames) .. rowlen
 	for i := cnt; i < rowLen; i++ {
 		arr[i] = FieldInfo{
@@ -42,6 +43,7 @@ func GetAllFieldNamesWithDroppedFields(rowLen int, colNames []FieldInfo) []Field
 			FieldType: C_unknownColType,				// 字段类型
 		}
 	}
+
 	return arr
 }
 
@@ -52,29 +54,44 @@ func GetAllFieldNamesWithDroppedFields(rowLen int, colNames []FieldInfo) []Field
 //  tbMap:
 func GetSqlFieldsEXpressions(colCnt int, colNames []FieldInfo, tbMap *replication.TableMapEvent) ([]SQL.NonAliasColumn, []string) {
 
-
 	colDefExps := make([]SQL.NonAliasColumn, colCnt)
 	colTypeNames := make([]string, colCnt)
 
 
 	for i := 0; i < colCnt; i++ {
+
 		//
 		typeName, colDef := GetMysqlDataTypeNameAndSqlColumn(
-			colNames[i].FieldType,
-			colNames[i].FieldName,
-			tbMap.ColumnType[i],
-			tbMap.ColumnMeta[i],
+			colNames[i].FieldType,	// 字段类型
+			colNames[i].FieldName,	// 字段名
+			tbMap.ColumnType[i],	// 表变更事件：列类型
+			tbMap.ColumnMeta[i],	// 表变更事件：列元数据
 		)
+
 		colDefExps[i] = colDef
 		colTypeNames[i] = typeName
+
 	}
+
+
 	return colDefExps, colTypeNames
 }
 
-func GetMysqlDataTypeNameAndSqlColumn(tpDef string, colName string, tp byte, meta uint16) (string, SQL.NonAliasColumn) {
+// GetMysqlDataTypeNameAndSqlColumn
+// [!!!]
+func GetMysqlDataTypeNameAndSqlColumn(
+	tpDef string,		//
+	colName string,		//
+	tp byte,			//
+	meta uint16,		//
+) (
+	string,
+	SQL.NonAliasColumn,
+) {
+
 	// for unkown type, defaults to BytesColumn
 
-	//get real string type
+	// get real string type
 	if tp == mysql.MYSQL_TYPE_STRING {
 		if meta >= 256 {
 			b0 := uint8(meta >> 8)
@@ -86,10 +103,8 @@ func GetMysqlDataTypeNameAndSqlColumn(tpDef string, colName string, tp byte, met
 		}
 	}
 
-
 	//fmt.Println("column type:", colName, tp)
 	switch tp {
-
 	case mysql.MYSQL_TYPE_NULL:
 		return C_unknownColType, SQL.BytesColumn(colName, SQL.NotNullable)
 	case mysql.MYSQL_TYPE_LONG:
@@ -196,24 +211,37 @@ func GenInsertSqlsForOneRowsEvent(
 		sqlType = "insert"
 	}
 
-
+	// ???
 	if len(primaryIdx) == 0 {
 		ifIgnorePrimary = false
 	}
 
+	// 忽略主键
 	if ifIgnorePrimary {
+		// 移除主键对应的 ColDefs
 		newColDefs = GetColDefIgnorePrimary(colDefs, primaryIdx)
 	}
 
+	// INSERT INTO table_name (column1,column2,column3,...)
+	// VALUES (value1,value2,value3,...);
+
 	// 每次处理 rowsPerSql 个 rows ，生成一条插入语句
 	for i = 0; i < rowCnt; i += rowsPerSql {
-		// 构造插入语句
+		// 构造插入语句: `INSERT INTO table_name (column1,column2,column3,...) VALUES `
 		insertSql = SQL.NewTable(table, newColDefs...).Insert(newColDefs...)
+
 		// 边界处理，最后一批 rows
 		endIndex = GetMinValue(rowCnt, i+rowsPerSql)
 
 		// 把 rEv.Rows[i:endIndex] 填入到 insertSql 中，生成插入语句
-		oneSql, err = GenInsertSqlForRows(rEv.Rows[i:endIndex], insertSql, schema, ifprefixDb, ifIgnorePrimary, primaryIdx)
+		oneSql, err = GenInsertSqlForRows(
+			rEv.Rows[i:endIndex], 	// (value1,value2,value3,...), (value1,value2,value3,...), ...
+			insertSql,				//
+			schema,					// database
+			ifprefixDb,				//
+			ifIgnorePrimary,		//
+			primaryIdx,				//
+		)
 		if err != nil {
 			log.Fatalf(fmt.Sprintf("Fail to generate %s sql for %s %s \n\terror: %v\n\trows data:%v",
 				sqlType, GetAbsTableName(schema, table), posStr, err, rEv.Rows[i:endIndex]))
@@ -221,7 +249,6 @@ func GenInsertSqlsForOneRowsEvent(
 			// 保存生成的语句
 			sqlArr = append(sqlArr, oneSql)
 		}
-
 	}
 
 	// 剩余 rows 处理一下 （应该不会出现?)
@@ -236,7 +263,6 @@ func GenInsertSqlsForOneRowsEvent(
 		}
 	}
 
-
 	//fmt.Println("one insert sqlArr", sqlArr)
 	return sqlArr
 
@@ -245,6 +271,7 @@ func GenInsertSqlsForOneRowsEvent(
 func GetColDefIgnorePrimary(colDefs []SQL.NonAliasColumn, primaryIdx []int) []SQL.NonAliasColumn {
 	m := []SQL.NonAliasColumn{}
 	for i := range colDefs {
+		// 忽略主键
 		if toolkits.ContainsInt(primaryIdx, i) {
 			continue
 		}
@@ -253,23 +280,34 @@ func GetColDefIgnorePrimary(colDefs []SQL.NonAliasColumn, primaryIdx []int) []SQ
 	return m
 }
 
+//
 func ConvertRowToExpressRow(row []interface{}, ifIgnorePrimary bool, primaryIdx []int) []SQL.Expression {
-
 	valueInserted := []SQL.Expression{}
 	for i, val := range row {
+		// 忽略主键对应的列
 		if ifIgnorePrimary {
 			if toolkits.ContainsInt(primaryIdx, i) {
 				continue
 			}
 		}
+		//
 		vExp := SQL.Literal(val)
 		valueInserted = append(valueInserted, vExp)
 	}
-
 	return valueInserted
 }
 
-func GenInsertSqlForRows(rows [][]interface{}, insertSql SQL.InsertStatement, schema string, ifprefixDb bool, ifIgnorePrimary bool, primaryIdx []int) (string, error) {
+func GenInsertSqlForRows(
+	rows [][]interface{},
+	insertSql SQL.InsertStatement,
+	schema string,
+	ifprefixDb bool,
+	ifIgnorePrimary bool,
+	primaryIdx []int,
+) (
+	string,
+	error,
+) {
 
 	// 遍历 rows ，填入 insertSql 中
 	for _, row := range rows {
@@ -285,10 +323,36 @@ func GenInsertSqlForRows(rows [][]interface{}, insertSql SQL.InsertStatement, sc
 
 }
 
-func GenDeleteSqlsForOneRowsEventRollbackInsert(posStr string, rEv *replication.RowsEvent, colDefs []SQL.NonAliasColumn, uniKey []int, ifFullImage bool, ifprefixDb bool) []string {
+func GenDeleteSqlsForOneRowsEventRollbackInsert(
+	posStr string,
+	rEv *replication.RowsEvent,
+	colDefs []SQL.NonAliasColumn,
+	uniKey []int,
+	ifFullImage bool,
+	ifprefixDb bool,
+) []string {
+
 	return GenDeleteSqlsForOneRowsEvent(posStr, rEv, colDefs, uniKey, ifFullImage, true, ifprefixDb)
+
 }
 
+
+
+// GenDeleteSqlsForOneRowsEvent
+//
+// 该函数的作用是生成针对单行事件的删除 SQL 语句。
+//
+// 参数：
+//	posStr：字符串类型，表示位置信息。
+//	rEv：*replication.RowsEvent 类型，用于获取行事件相关信息。
+//	colDefs：[]SQL.NonAliasColumn 类型，表示非别名列定义信息。
+//	uniKey：[]int 类型，表示唯一键。
+//	ifFullImage：布尔类型，表示是否使用全量镜像。
+//	ifRollback：布尔类型，表示是否回滚。
+//	ifprefixDb：布尔类型，表示是否添加数据库前缀。
+//
+// 返回值：
+//  []string：字符串切片类型，表示生成的 SQL 语句数组。
 func GenDeleteSqlsForOneRowsEvent(
 	posStr string,
 	rEv *replication.RowsEvent,
@@ -309,6 +373,7 @@ func GenDeleteSqlsForOneRowsEvent(
 		schemaInSql = ""
 	}
 
+	// SQL 类型：delete
 	var sqlType string
 	if ifRollback {
 		sqlType = "delete_for_insert_rollback"
@@ -316,24 +381,26 @@ func GenDeleteSqlsForOneRowsEvent(
 		sqlType = "delete"
 	}
 
+	// 遍历每个 row
 	for i, row := range rEv.Rows {
 		//
 		whereCond := GenEqualConditions(row, colDefs, uniKey, ifFullImage)
+
 		//
 		sql, err := SQL.NewTable(table, colDefs...).Delete().Where(SQL.And(whereCond...)).String(schemaInSql)
 		if err != nil {
-			log.Fatalf(fmt.Sprintf("Fail to generate %s sql for %s %s \n\terror: %s\n\trows data:%v",
-				sqlType, GetAbsTableName(schema, table), posStr, err, row))
+			log.Fatalf(fmt.Sprintf("Fail to generate %s sql for %s %s \n\terror: %s\n\trows data:%v", sqlType, GetAbsTableName(schema, table), posStr, err, row))
 			//continue
 		}
+
 		sqlArr[i] = sql
 		//sqlArr = append(sqlArr, sql)
 	}
+
 	return sqlArr
 }
 
 func GenEqualConditions(row []interface{}, colDefs []SQL.NonAliasColumn, uniKey []int, ifFullImage bool) []SQL.BoolExpression {
-
 	if !ifFullImage && len(uniKey) > 0 {
 		expArrs := make([]SQL.BoolExpression, len(uniKey))
 		for k, idx := range uniKey {
@@ -342,7 +409,7 @@ func GenEqualConditions(row []interface{}, colDefs []SQL.NonAliasColumn, uniKey 
 		return expArrs
 	}
 
-
+	//
 	expArrs := make([]SQL.BoolExpression, len(row))
 	for i, v := range row {
 		expArrs[i] = SQL.EqL(colDefs[i], v)

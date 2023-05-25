@@ -117,6 +117,8 @@ func SendBinlogEventRepl(cfg *ConfCmd) {
 			StartPos: tbMapPos,
 		}
 
+
+		//
 		chkRe = oneMyEvent.CheckBinEvent(cfg, ev, &currentBinlog)
 		if chkRe == C_reContinue {
 			continue

@@ -25,6 +25,7 @@ var (
 	}
 )
 
+// BinEventStats 事件统计
 type BinEventStats struct {
 	Timestamp     uint32
 	Binlog        string
@@ -38,6 +39,7 @@ type BinEventStats struct {
 	ParsedSqlInfo *dsql.SqlInfo // for ddl
 }
 
+// OrgSqlPrint 原始语句
 type OrgSqlPrint struct {
 	Binlog   string
 	StartPos uint32

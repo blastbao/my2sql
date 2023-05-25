@@ -58,6 +58,7 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 		posStr             string
 		//printStatementSql  bool = false
 	)
+
 	log.Infof(fmt.Sprintf("start thread %d to generate redo/rollback sql", i))
 	if cfg.WorkType == "rollback" {
 		ifRollback = true
@@ -85,6 +86,7 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 			log.Errorf("no suitable table struct found for %s for event %s", fulltb, posStr)
 		}
 
+
 		// 列数目
 		colCnt = len(ev.BinEvent.Rows[0])
 		// 获取所有字段的定义
@@ -96,6 +98,11 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 		if len(colsTypeName) > len(tbInfo.Columns) {
 			log.Fatalf("%s column count %d in binlog > in table structure %d, usually means DDL in the middle", fulltb, len(colsTypeName), len(tbInfo.Columns))
 		}
+
+
+
+
+
 
 		//
 		for ci, colType := range colsTypeName {
@@ -168,29 +175,28 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 		// 生成 sql 语句
 		if ev.SqlType == "insert" {
 			if ifRollback {
-
+				// 生成一组 Delete 语句
 				sqlArr = GenDeleteSqlsForOneRowsEventRollbackInsert(
-					posStr,
-					ev.BinEvent,
-					colsDef,
-					uniqueKeyIdx,
-					cfg.FullColumns,
-					cfg.SqlTblPrefixDb,
+					posStr,					// binlog position
+					ev.BinEvent,			// binlog event
+					colsDef,				//
+					uniqueKeyIdx,			//
+					cfg.FullColumns,		//
+					cfg.SqlTblPrefixDb,		//
 				)
 
 			} else {
-
+				// 生成一组 Insert 语句
 				sqlArr = GenInsertSqlsForOneRowsEvent(
 					posStr,
 					ev.BinEvent,
 					colsDef,
-					1,
+					1,			// 一条 sql 负责几个 rows 的插入，默认是 1
 					false,
 					cfg.SqlTblPrefixDb,
 					ifIgnorePrimary,
 					primaryKeyIdx,
 				)
-
 			}
 		} else if ev.SqlType == "delete" {
 			if ifRollback {

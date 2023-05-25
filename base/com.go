@@ -35,6 +35,9 @@ type MyBinEvent struct {
 	OrgSql      string                 // for ddl and binlog which is not row format
 }
 
+//
+//
+//
 func (e *MyBinEvent) CheckBinEvent(cfg *ConfCmd, ev *replication.BinlogEvent, currentBinlog *string) int {
 	// 当前 pos
 	myPos := mysql.Position{
