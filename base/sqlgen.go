@@ -383,16 +383,15 @@ func GenDeleteSqlsForOneRowsEvent(
 
 	// 遍历每个 row
 	for i, row := range rEv.Rows {
-		//
-		whereCond := GenEqualConditions(row, colDefs, uniKey, ifFullImage)
-
-		//
-		sql, err := SQL.NewTable(table, colDefs...).Delete().Where(SQL.And(whereCond...)).String(schemaInSql)
+		// 生成 WHERE 子句中的相等条件表达式集合，用 AND 组合起来
+		whereCond := SQL.And(GenEqualConditions(row, colDefs, uniKey, ifFullImage)...)
+		// 调用 String(schema) 方法将生成的 SQL 语句转换为字符串表示形式
+		sql, err := SQL.NewTable(table, colDefs...).Delete().Where(whereCond).String(schemaInSql)
 		if err != nil {
 			log.Fatalf(fmt.Sprintf("Fail to generate %s sql for %s %s \n\terror: %s\n\trows data:%v", sqlType, GetAbsTableName(schema, table), posStr, err, row))
 			//continue
 		}
-
+		// 将生成的 sql 语句保存到 sqlArr 中
 		sqlArr[i] = sql
 		//sqlArr = append(sqlArr, sql)
 	}
