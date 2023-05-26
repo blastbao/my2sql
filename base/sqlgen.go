@@ -400,15 +400,18 @@ func GenDeleteSqlsForOneRowsEvent(
 }
 
 func GenEqualConditions(row []interface{}, colDefs []SQL.NonAliasColumn, uniKey []int, ifFullImage bool) []SQL.BoolExpression {
+	// 如果指定了 uniKey 且无需生成 full image ，就根据 uniKey 生成 where 条件，即可唯一定位到 row 。
 	if !ifFullImage && len(uniKey) > 0 {
 		expArrs := make([]SQL.BoolExpression, len(uniKey))
 		for k, idx := range uniKey {
+			// colDefs[idx] => unique key column name
+			// row[idx]     => unique key column value
 			expArrs[k] = SQL.EqL(colDefs[idx], row[idx])
 		}
 		return expArrs
 	}
 
-	//
+	// 否则，用 row 中每个 columns 一起来构造 where 条件。
 	expArrs := make([]SQL.BoolExpression, len(row))
 	for i, v := range row {
 		expArrs[i] = SQL.EqL(colDefs[i], v)
@@ -421,7 +424,18 @@ func GenInsertSqlsForOneRowsEventRollbackDelete(posStr string, rEv *replication.
 	return GenInsertSqlsForOneRowsEvent(posStr, rEv, colDefs, rowsPerSql, true, ifprefixDb, false, []int{})
 }
 
-func GenUpdateSqlsForOneRowsEvent(posStr string, colsTypeNameFromMysql []string, colsTypeName []string, rEv *replication.RowsEvent, colDefs []SQL.NonAliasColumn, uniKey []int, ifFullImage bool, ifRollback bool, ifprefixDb bool) []string {
+func GenUpdateSqlsForOneRowsEvent(
+	posStr string,
+	colsTypeNameFromMysql []string,
+	colsTypeName []string,
+	rEv *replication.RowsEvent,
+	colDefs []SQL.NonAliasColumn,
+	uniKey []int,
+	ifFullImage bool,
+	ifRollback bool,  // 如果为 true ，则意味着生成 update 的回滚语句
+	ifprefixDb bool,
+) []string {
+
 	//colsTypeNameFromMysql: for text type, which is stored as blob
 	var (
 		rowCnt      int    = len(rEv.Rows)
@@ -439,13 +453,21 @@ func GenUpdateSqlsForOneRowsEvent(posStr string, colsTypeNameFromMysql []string,
 		schemaInSql = ""
 	}
 
+	//
+	// UPDATE table_name
+	// SET column1 = value1, column2 = value2, ...
+	// WHERE condition;
+	//
+
 	if ifRollback {
 		sqlType = "update_for_update_rollback"
 	} else {
 		sqlType = "update"
 	}
+
+	// 对于 update 语句，会记录变更前后的 row 值，即 rows[0] 为 before ，rows[1] 为 after 。
 	for i := 0; i < rowCnt; i += 2 {
-		upSql := SQL.NewTable(table, colDefs...).Update()
+		upSql := SQL.NewTable(table, colDefs...).Update() // ... UPDATE table_name ...
 		if ifRollback {
 			upSql = GenUpdateSetPart(colsTypeNameFromMysql, colsTypeName, upSql, colDefs, rEv.Rows[i], rEv.Rows[i+1], ifFullImage)
 			wherePart = GenEqualConditions(rEv.Rows[i+1], colDefs, uniKey, ifFullImage)
@@ -453,8 +475,9 @@ func GenUpdateSqlsForOneRowsEvent(posStr string, colsTypeNameFromMysql []string,
 			upSql = GenUpdateSetPart(colsTypeNameFromMysql, colsTypeName, upSql, colDefs, rEv.Rows[i+1], rEv.Rows[i], ifFullImage)
 			wherePart = GenEqualConditions(rEv.Rows[i], colDefs, uniKey, ifFullImage)
 		}
-
+		// 设置 where 条件
 		upSql.Where(SQL.And(wherePart...))
+		// 生成 sql 语句
 		sql, err = upSql.String(schemaInSql)
 		if err != nil {
 			log.Fatalf(fmt.Sprintf("Fail to generate %s sql for %s %s \n\terror: %s\n\trows data:%v\n%v",
@@ -462,56 +485,85 @@ func GenUpdateSqlsForOneRowsEvent(posStr string, colsTypeNameFromMysql []string,
 		} else {
 			sqlArr = append(sqlArr, sql)
 		}
-
 	}
 	//fmt.Println(sqlArr)
 	return sqlArr
 
 }
 
-func GenUpdateSetPart(colsTypeNameFromMysql []string, colTypeNames []string, updateSql SQL.UpdateStatement, colDefs []SQL.NonAliasColumn, rowAfter []interface{}, rowBefore []interface{}, ifFullImage bool) SQL.UpdateStatement {
 
-	ifUpdateCol := false
-	for i, v := range rowAfter {
-		ifUpdateCol = false
+// GenUpdateSetPart 根据 rowAfter 和 rowBefore 中有差异的 columns 列值，生成 update 语句，用于将 row 更新为 after 。
+func GenUpdateSetPart(
+	colsTypeNameFromMysql []string,	// 列类型名集合
+	colTypeNames []string,			// 列类型名集合
+	updateSql SQL.UpdateStatement,	// SQL 语句
+	colDefs []SQL.NonAliasColumn,	// 列名集合
+	rowAfter []interface{},			//
+	rowBefore []interface{},		//
+	ifFullImage bool,				// 如果为 true ，就不考虑具体发生变更的 cols ，而是直接根据 rowAfter 生成完整的 sql 语句。
+) SQL.UpdateStatement {
+
+	ifColUpdated := false
+
+	for colIdx, colVal := range rowAfter {
+
+		// 当前 col 值在 before/after 中是否发生改变
+		ifColUpdated = false
+
 		//fmt.Printf("type: %s\nbefore: %v\nafter: %v\n", colTypeNames[i], rowBefore[i], v)
 
+		// 如果为 true ，就不考虑具体发生变更的 cols ，而是直接根据 rowAfter 生成完整的 sql 语句。
 		if !ifFullImage {
 			// text is stored as blob in binlog
-			if toolkits.ContainsString(G_Bytes_Column_Types, colTypeNames[i]) && !strings.Contains(strings.ToLower(colsTypeNameFromMysql[i]), "text") {
-				aArr, aOk := v.([]byte)
-				bArr, bOk := rowBefore[i].([]byte)
+			// 如果列类型是 "blob", "json", "geometry", "unknown_type" 之一，且非 text 类型，则用特殊方式来比较
+			if toolkits.ContainsString(G_Bytes_Column_Types, colTypeNames[colIdx]) &&
+				!strings.Contains(strings.ToLower(colsTypeNameFromMysql[colIdx]), "text") {
+
+				// 变更后的列值
+				afterColVal, aOk := colVal.([]byte)
+				// 变更前的列值
+				beforeColVal, bOk := rowBefore[colIdx].([]byte)
+
+				// 是否发生变化
 				if aOk && bOk {
-					if CompareEquelByteSlice(aArr, bArr) {
+					if CompareEquelByteSlice(afterColVal, beforeColVal) {
 						//fmt.Println("bytes compare equal")
-						ifUpdateCol = false
+						ifColUpdated = false
 					} else {
-						ifUpdateCol = true
+						ifColUpdated = true
 						//fmt.Println("bytes compare unequal")
 					}
 				} else {
 					//fmt.Println("error to convert to []byte")
 					//should update the column
-					ifUpdateCol = true
+					ifColUpdated = true
 				}
 
+			// 否则，直接用 "==" 来笔记
 			} else {
-				if v == rowBefore[i] {
+				if colVal == rowBefore[colIdx] {
 					//fmt.Println("compare equal")
-					ifUpdateCol = false
+					ifColUpdated = false
 				} else {
 					//fmt.Println("compare unequal")
-					ifUpdateCol = true
+					ifColUpdated = true
 				}
 			}
 		} else {
-			ifUpdateCol = true
+			ifColUpdated = true
 		}
 
-		if ifUpdateCol {
-			updateSql.Set(colDefs[i], SQL.Literal(v))
+
+		// UPDATE table_name
+		// SET column1 = value1, column2 = value2, ...
+		// WHERE condition;
+		//
+		// 如果列值发生变更，则需要更新指定列为 after col val 。
+		if ifColUpdated {
+			updateSql.Set(colDefs[colIdx], SQL.Literal(colVal))
 		}
 	}
+
 	return updateSql
 
 }

@@ -18,7 +18,6 @@ func ParserAllBinEventsFromRepl(cfg *ConfCmd) {
 	log.Info("finish getting binlog from mysql")
 }
 
-
 // NewReplBinlogStreamer 创建一个 mysql syncer
 func NewReplBinlogStreamer(cfg *ConfCmd) *replication.BinlogStreamer {
 	replCfg := replication.BinlogSyncerConfig{

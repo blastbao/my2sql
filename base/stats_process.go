@@ -27,14 +27,14 @@ var (
 
 // BinEventStats 事件统计
 type BinEventStats struct {
-	Timestamp     uint32
-	Binlog        string
-	StartPos      uint32
-	StopPos       uint32
-	Database      string
-	Table         string
-	QueryType     string // query, insert, update, delete
-	RowCnt        uint32
+	Timestamp     uint32		// 事件时间
+	Binlog        string		// 日志
+	StartPos      uint32		// 起始位置
+	StopPos       uint32		// 结束位置
+	Database      string		// 库
+	Table         string		// 表
+	QueryType     string 		// query, insert, update, delete
+	RowCnt        uint32		// 当前事件包含多少行
 	QuerySql      string        // for type=query
 	ParsedSqlInfo *dsql.SqlInfo // for ddl
 }
@@ -71,8 +71,19 @@ type BigLongTrxInfo struct {
 	StopPos    uint32
 	RowCnt     uint32                       // total row count for all statement
 	Duration   uint32                       // how long the trx lasts
-	Statements map[string]map[string]uint32 // rowcnt for each type statment: insert, update, delete. {db1.tb1:{insert:0, update:2, delete:10}}
 
+
+	// rowcnt for each type statment: insert, update, delete.
+	//
+	// {
+	//   db1.tb1: {
+	//  	insert: 0,
+	// 		update: 2,
+	//		delete: 10
+	//   }
+	// }
+	//
+	Statements map[string]map[string]uint32
 }
 
 func GetBigLongTrxPrintHeaderLine(headers []string) string {
@@ -140,6 +151,8 @@ func GetDbTbAndQueryAndRowCntFromBinevent(ev *replication.BinlogEvent) (string, 
 		sql = "commit"
 		sqlType = "query"
 	}
+
+
 	return db, tb, sqlType, sql, rowCnt
 }
 
@@ -160,34 +173,49 @@ func ProcessBinEventStats(cfg *ConfCmd, wg *sync.WaitGroup) {
 	)
 
 	log.Info("start thread to analyze statistics from binlog")
+
+
 	for st := range cfg.StatChan {
 
+		// binlog 发生变更
 		if lastBinlog != st.Binlog {
 			// new binlog
 			//print stats
+			// 把 stats 逐行写入到文件
 			for _, oneSt := range statsPrintArr {
 				cfg.StatFH.WriteString(GetStatsPrintContentLine(oneSt))
 			}
+			// 重置 print 数据
 			statsPrintArr = map[string]*BinEventStatsPrint{}
-
+			// 重置 print 时间
 			lastPrintTime = 0
 		}
+
 		if lastPrintTime == 0 {
 			lastPrintTime = st.Timestamp + printInterval
 		}
+
 		if lastBinlog == "" {
 			lastBinlog = st.Binlog
 		}
 
 		dbtbKeyes = []string{}
+
 		if st.QueryType == "query" {
+
 			//fmt.Print(st.QuerySql)
 			querySql := strings.ToLower(st.QuerySql)
 			//fmt.Printf("query sql:%s\n", querySql)
 
 			// trx cannot spreads in different binlogs
 			if querySql == "begin" {
-				oneBigLong = BigLongTrxInfo{Binlog: st.Binlog, StartPos: st.StartPos, StartTime: 0, RowCnt: 0, Statements: map[string]map[string]uint32{}}
+				oneBigLong = BigLongTrxInfo{
+					Binlog: st.Binlog,
+					StartPos: st.StartPos,
+					StartTime: 0,
+					RowCnt: 0,
+					Statements: map[string]map[string]uint32{},
+				}
 			} else if querySql == "commit" || querySql == "rollback" {
 				if oneBigLong.StartTime > 0 { // the rows event may be skipped by --databases --tables
 					//big and long trx
@@ -198,36 +226,56 @@ func ProcessBinEventStats(cfg *ConfCmd, wg *sync.WaitGroup) {
 						cfg.BiglongFH.WriteString(GetBigLongTrxContentLine(oneBigLong))
 					}
 				}
-
 			}
+
 		} else {
-			//big and long trx
+
+			// big and long trx
 			if oneBigLong.Binlog == "" {
 				oneBigLong.Binlog = st.Binlog
 			}
+			// 开始位置
 			if oneBigLong.StartPos == 0 {
 				oneBigLong.StartPos = st.StartPos
 			}
-
+			// 总行数
 			oneBigLong.RowCnt += st.RowCnt
+			// 统计 db.tb 下，各种类型语句的行数目。
 			dbtbKey := GetAbsTableName(st.Database, st.Table)
-
 			if _, ok := oneBigLong.Statements[dbtbKey]; !ok {
-				oneBigLong.Statements[dbtbKey] = map[string]uint32{"insert": 0, "update": 0, "delete": 0}
+				oneBigLong.Statements[dbtbKey] = map[string]uint32{
+					"insert": 0,
+					"update": 0,
+					"delete": 0,
+				}
 			}
 			oneBigLong.Statements[dbtbKey][st.QueryType] += st.RowCnt
+			// 开始时间
 			if oneBigLong.StartTime == 0 {
 				oneBigLong.StartTime = st.Timestamp
 			}
+			// 保存 db.tb
 			dbtbKeyes = append(dbtbKeyes, dbtbKey)
-
 		}
+
+
 		for _, oneTbKey := range dbtbKeyes {
-			//stats
+			// stats
+			// 不存在则新建
 			if _, ok := statsPrintArr[oneTbKey]; !ok {
-				statsPrintArr[oneTbKey] = &BinEventStatsPrint{Binlog: st.Binlog, StartTime: st.Timestamp, StartPos: st.StartPos,
-					Database: st.Database, Table: st.Table, Inserts: 0, Updates: 0, Deletes: 0}
+				statsPrintArr[oneTbKey] = &BinEventStatsPrint{
+					Binlog: st.Binlog,
+					StartTime: st.Timestamp,
+					StartPos: st.StartPos,
+					Database: st.Database,
+					Table: st.Table,
+					Inserts: 0,
+					Updates: 0,
+					Deletes: 0,
+				}
 			}
+
+			// 行数
 			switch st.QueryType {
 			case "insert":
 				statsPrintArr[oneTbKey].Inserts += st.RowCnt
@@ -236,7 +284,11 @@ func ProcessBinEventStats(cfg *ConfCmd, wg *sync.WaitGroup) {
 			case "delete":
 				statsPrintArr[oneTbKey].Deletes += st.RowCnt
 			}
+
+			// 时间
 			statsPrintArr[oneTbKey].StopTime = st.Timestamp
+
+			// 位置
 			statsPrintArr[oneTbKey].StopPos = st.StopPos
 		}
 
@@ -266,9 +318,17 @@ func ProcessBinEventStats(cfg *ConfCmd, wg *sync.WaitGroup) {
 func GetStatsPrintContentLine(st *BinEventStatsPrint) string {
 	//[binlog, starttime, stoptime, startpos, stoppos, inserts, updates, deletes, database, table]
 	return fmt.Sprintf("%-17s %-19s %-19s %-10d %-10d %-8d %-8d %-8d %-15s %-20s\n",
-		st.Binlog, GetDatetimeStr(int64(st.StartTime), int64(0), constvar.DATETIME_FORMAT_NOSPACE),
+		st.Binlog,
+		GetDatetimeStr(int64(st.StartTime), int64(0), constvar.DATETIME_FORMAT_NOSPACE),
 		GetDatetimeStr(int64(st.StopTime), int64(0), constvar.DATETIME_FORMAT_NOSPACE),
-		st.StartPos, st.StopPos, st.Inserts, st.Updates, st.Deletes, st.Database, st.Table)
+		st.StartPos,
+		st.StopPos,
+		st.Inserts,
+		st.Updates,
+		st.Deletes,
+		st.Database,
+		st.Table,
+	)
 }
 
 func GetBigLongTrxContentLine(blTrx BigLongTrxInfo) string {
@@ -276,8 +336,12 @@ func GetBigLongTrxContentLine(blTrx BigLongTrxInfo) string {
 	return fmt.Sprintf("%-17s %-19s %-19s %-10d %-10d %-8d %-10d %s\n", blTrx.Binlog,
 		GetDatetimeStr(int64(blTrx.StartTime), int64(0), constvar.DATETIME_FORMAT_NOSPACE),
 		GetDatetimeStr(int64(blTrx.StopTime), int64(0), constvar.DATETIME_FORMAT_NOSPACE),
-		blTrx.StartPos, blTrx.StopPos,
-		blTrx.RowCnt, blTrx.Duration, GetBigLongTrxStatementsStr(blTrx.Statements))
+		blTrx.StartPos,
+		blTrx.StopPos,
+		blTrx.RowCnt,
+		blTrx.Duration,
+		GetBigLongTrxStatementsStr(blTrx.Statements),
+	)
 }
 
 func GetBigLongTrxStatementsStr(st map[string]map[string]uint32) string {

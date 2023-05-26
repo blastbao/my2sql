@@ -10,6 +10,7 @@ import (
 
 type Statement interface {
 	// String returns generated SQL as string.
+	// 生成 sql 语句
 	String(database string) (sql string, err error)
 }
 
@@ -275,9 +276,7 @@ func (us *unionStatementImpl) String(database string) (sql string, err error) {
 // SELECT Statement ============================================================
 //
 
-func newSelectStatement(
-	table ReadableTable,
-	projections []Projection) SelectStatement {
+func newSelectStatement(table ReadableTable, projections []Projection) SelectStatement {
 
 	return &selectStatementImpl{
 		table:          table,

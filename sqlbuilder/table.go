@@ -9,10 +9,12 @@ import (
 	"github.com/dropbox/godropbox/errors"
 )
 
-// The sql table read interface.  NOTE: NATURAL JOINs, and join "USING" clause
-// are not supported.
+// The sql table read interface.
+// NOTE: NATURAL JOINs, and join "USING" clause are not supported.
 type ReadableTable interface {
+
 	// Returns the list of columns that are in the current table expression.
+	// 列集合
 	Columns() []NonAliasColumn
 
 	// Generates the sql string for the current table expression.  Note: the
@@ -60,6 +62,7 @@ func NewTable(name string, columns ...NonAliasColumn) *Table {
 		columns:      columns,
 		columnLookup: make(map[string]NonAliasColumn),
 	}
+
 	for _, c := range columns {
 		err := c.setTableName(name)
 		if err != nil {

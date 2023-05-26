@@ -99,11 +99,6 @@ func GenForwardRollbackSqlFromBinEvent(i uint, cfg *ConfCmd, wg *sync.WaitGroup)
 			log.Fatalf("%s column count %d in binlog > in table structure %d, usually means DDL in the middle", fulltb, len(colsTypeName), len(tbInfo.Columns))
 		}
 
-
-
-
-
-
 		//
 		for ci, colType := range colsTypeName {
 

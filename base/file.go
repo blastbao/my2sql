@@ -34,7 +34,6 @@ type BinFileParser struct {
 //	-rw-r----- 1 mysql mysql  392707488 Aug  3 16:16 mysql-bin.000015
 //	-rw-r----- 1 mysql mysql        246 Aug  3 16:15 mysql-bin.index
 
-
 // MyParseAllBinlogFiles 逐个 binlog 文件进行解析，解析结果会通过 cfg 中的管道传出去。
 func (this BinFileParser) MyParseAllBinlogFiles(cfg *ConfCmd) {
 	defer cfg.CloseChan()
@@ -318,8 +317,8 @@ func (this BinFileParser) MyParseReader(cfg *ConfCmd, r io.Reader, binlog *strin
 			if sqlType == "query" {
 				// 发送到管道 cfg.StatChan 上
 				cfg.StatChan <- BinEventStats{
-					Timestamp: h.Timestamp,
-					Binlog: *binlog,
+					Timestamp: h.Timestamp,				//
+					Binlog: *binlog,					//
 					StartPos: h.LogPos - h.EventSize, 	// ???
 					StopPos: h.LogPos,
 					Database: db,

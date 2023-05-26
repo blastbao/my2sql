@@ -11,13 +11,16 @@ import (
 
 // XXX: Maybe add UIntColumn
 
-// Representation of a table for query generation
+// Column representation of a table for query generation
 type Column interface {
 	isProjectionInterface
 
+	// 列名
 	Name() string
+
 	// Serialization for use in column lists
 	SerializeSqlForColumnList(out *bytes.Buffer) error
+
 	// Serialization for use in an expression (Clause)
 	SerializeSql(out *bytes.Buffer) error
 
@@ -134,11 +137,13 @@ func StrColumn(
 	name string,
 	charset Charset,
 	collation Collation,
-	nullable NullableColumn) NonAliasColumn {
+	nullable NullableColumn,
+) NonAliasColumn {
 
 	if !validIdentifierName(name) {
 		panic("Invalid column name in str column")
 	}
+
 	sc := &stringColumn{charset: charset, collation: collation}
 	sc.name = name
 	sc.nullable = nullable
